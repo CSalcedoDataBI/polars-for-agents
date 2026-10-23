@@ -5134,7 +5134,7 @@
    {
     "name": "collect",
     "kind": "method",
-    "signature": "collect(self, *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, no_optimization: 'bool' = False, engine: 'EngineType' = 'auto', background: 'bool' = False, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>, **_kwargs: 'Any') -> 'DataFrame | InProcessQuery'",
+    "signature": "collect(self, *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, no_optimization: 'bool' = False, engine: 'EngineType' = 'auto', background: 'bool' = False, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>, **_kwargs: 'Any') -> 'DataFrame | InProcessQuery'",
     "summary": "Materialize this LazyFrame into a DataFrame.",
     "deprecated": false,
     "unstable": false,
@@ -5203,7 +5203,7 @@
    {
     "name": "collect_async",
     "kind": "method",
-    "signature": "collect_async(self, *, gevent: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'Awaitable[DataFrame] | _GeventDataFrameResult[DataFrame]'",
+    "signature": "collect_async(self, *, gevent: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'Awaitable[DataFrame] | _GeventDataFrameResult[DataFrame]'",
     "summary": "Collect DataFrame asynchronously in thread pool.",
     "deprecated": false,
     "unstable": true,
@@ -5218,7 +5218,7 @@
    {
     "name": "collect_batches",
     "kind": "method",
-    "signature": "collect_batches(self, *, chunk_size: 'int | None' = None, maintain_order: 'bool' = True, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'Iterator[DataFrame]'",
+    "signature": "collect_batches(self, *, chunk_size: 'int | None' = None, maintain_order: 'bool' = True, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'Iterator[DataFrame]'",
     "summary": "Evaluate the query in streaming mode and get a generator that returns chunks.",
     "deprecated": false,
     "unstable": true,
@@ -5308,7 +5308,7 @@
    {
     "name": "explain",
     "kind": "method",
-    "signature": "explain(self, *, format: 'ExplainFormat' = 'plain', optimized: 'bool' = True, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, streaming: 'bool' = False, engine: 'EngineType' = 'auto', tree_format: 'bool | None' = None, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'str'",
+    "signature": "explain(self, *, format: 'ExplainFormat' = 'plain', optimized: 'bool' = True, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, streaming: 'bool' = False, engine: 'EngineType' = 'auto', tree_format: 'bool | None' = None, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'str'",
     "summary": "Create a string representation of the query plan.",
     "deprecated": false,
     "unstable": false,
@@ -5652,7 +5652,7 @@
    {
     "name": "profile",
     "kind": "method",
-    "signature": "profile(self, *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, no_optimization: 'bool' = False, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, show_plot: 'bool' = False, truncate_nodes: 'int' = 0, figsize: 'tuple[int, int]' = (18, 8), engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>, **_kwargs: 'Any') -> 'tuple[DataFrame, DataFrame]'",
+    "signature": "profile(self, *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, no_optimization: 'bool' = False, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, show_plot: 'bool' = False, truncate_nodes: 'int' = 0, figsize: 'tuple[int, int]' = (18, 8), engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>, **_kwargs: 'Any') -> 'tuple[DataFrame, DataFrame]'",
     "summary": "Profile a LazyFrame.",
     "deprecated": false,
     "unstable": false,
@@ -5834,7 +5834,7 @@
    {
     "name": "show_graph",
     "kind": "method",
-    "signature": "show_graph(self, *, optimized: 'bool' = True, show: 'bool' = True, output_path: 'str | Path | None' = None, raw_output: 'bool' = False, figsize: 'tuple[float, float]' = (16.0, 12.0), type_coercion: 'bool' = True, _type_check: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, engine: 'EngineType' = 'auto', plan_stage: 'PlanStage' = 'ir', _check_order: 'bool' = True, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'str | None'",
+    "signature": "show_graph(self, *, optimized: 'bool' = True, show: 'bool' = True, output_path: 'str | Path | None' = None, raw_output: 'bool' = False, figsize: 'tuple[float, float]' = (16.0, 12.0), type_coercion: 'bool' = True, _type_check: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, engine: 'EngineType' = 'auto', plan_stage: 'PlanStage' = 'ir', _check_order: 'bool' = True, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'str | None'",
     "summary": "Show a plot of the query plan.",
     "deprecated": false,
     "unstable": false,
@@ -5890,7 +5890,7 @@
    {
     "name": "sink_batches",
     "kind": "method",
-    "signature": "sink_batches(self, function: 'Callable[[DataFrame], bool | None]', *, chunk_size: 'int | None' = None, maintain_order: 'bool' = True, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'pl.LazyFrame | None'",
+    "signature": "sink_batches(self, function: 'Callable[[DataFrame], bool | None]', *, chunk_size: 'int | None' = None, maintain_order: 'bool' = True, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'pl.LazyFrame | None'",
     "summary": "Evaluate the query and call a user-defined function for every ready batch.",
     "deprecated": false,
     "unstable": true,
@@ -5899,7 +5899,7 @@
    {
     "name": "sink_csv",
     "kind": "method",
-    "signature": "sink_csv(self, path: 'str | Path | IO[bytes] | IO[str] | PartitionBy', *, include_bom: 'bool' = False, compression: \"Literal['uncompressed', 'gzip', 'zstd']\" = 'uncompressed', compression_level: 'int | None' = None, check_extension: 'bool' = True, include_header: 'bool' = True, separator: 'str' = ',', line_terminator: 'str' = '\\n', quote_char: 'str' = '\"', batch_size: 'int' = 1024, datetime_format: 'str | None' = None, date_format: 'str | None' = None, time_format: 'str | None' = None, float_scientific: 'bool | None' = None, float_precision: 'int | None' = None, decimal_comma: 'bool' = False, null_value: 'str | None' = None, quote_style: 'CsvQuoteStyle | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'LazyFrame | None'",
+    "signature": "sink_csv(self, path: 'str | Path | IO[bytes] | IO[str] | PartitionBy', *, include_bom: 'bool' = False, compression: \"Literal['uncompressed', 'gzip', 'zstd']\" = 'uncompressed', compression_level: 'int | None' = None, check_extension: 'bool' = True, include_header: 'bool' = True, separator: 'str' = ',', line_terminator: 'str' = '\\n', quote_char: 'str' = '\"', batch_size: 'int' = 1024, datetime_format: 'str | None' = None, date_format: 'str | None' = None, time_format: 'str | None' = None, float_scientific: 'bool | None' = None, float_precision: 'int | None' = None, decimal_comma: 'bool' = False, null_value: 'str | None' = None, quote_style: 'CsvQuoteStyle | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'LazyFrame | None'",
     "summary": "Evaluate the query in streaming mode and write to a CSV file.",
     "deprecated": false,
     "unstable": false,
@@ -5951,7 +5951,7 @@
    {
     "name": "sink_delta",
     "kind": "method",
-    "signature": "sink_delta(self, target: 'str | Path | deltalake.DeltaTable', *, mode: \"Literal['error', 'append', 'overwrite', 'ignore', 'merge']\" = 'error', storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', delta_write_options: 'dict[str, Any] | None' = None, delta_merge_options: 'dict[str, Any] | None' = None, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'deltalake.table.TableMerger | None'",
+    "signature": "sink_delta(self, target: 'str | Path | deltalake.DeltaTable', *, mode: \"Literal['error', 'append', 'overwrite', 'ignore', 'merge']\" = 'error', storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', delta_write_options: 'dict[str, Any] | None' = None, delta_merge_options: 'dict[str, Any] | None' = None, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'deltalake.table.TableMerger | None'",
     "summary": "Sink DataFrame as delta table.",
     "deprecated": false,
     "unstable": true,
@@ -5970,7 +5970,7 @@
    {
     "name": "sink_ipc",
     "kind": "method",
-    "signature": "sink_ipc(self, path: 'str | Path | IO[bytes] | PartitionBy', *, compression: 'IpcCompression | None' = 'uncompressed', compat_level: 'CompatLevel | None' = None, record_batch_size: 'int | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>, _record_batch_statistics: 'bool' = False) -> 'LazyFrame | None'",
+    "signature": "sink_ipc(self, path: 'str | Path | IO[bytes] | PartitionBy', *, compression: 'IpcCompression | None' = 'uncompressed', compat_level: 'CompatLevel | None' = None, record_batch_size: 'int | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>, _record_batch_statistics: 'bool' = False) -> 'LazyFrame | None'",
     "summary": "Evaluate the query in streaming mode and write to an IPC file.",
     "deprecated": false,
     "unstable": true,
@@ -6010,7 +6010,7 @@
    {
     "name": "sink_ndjson",
     "kind": "method",
-    "signature": "sink_ndjson(self, path: 'str | Path | IO[bytes] | IO[str] | PartitionBy', *, compression: \"Literal['uncompressed', 'gzip', 'zstd']\" = 'uncompressed', compression_level: 'int | None' = None, check_extension: 'bool' = True, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'LazyFrame | None'",
+    "signature": "sink_ndjson(self, path: 'str | Path | IO[bytes] | IO[str] | PartitionBy', *, compression: \"Literal['uncompressed', 'gzip', 'zstd']\" = 'uncompressed', compression_level: 'int | None' = None, check_extension: 'bool' = True, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'LazyFrame | None'",
     "summary": "Evaluate the query in streaming mode and write to an NDJSON file.",
     "deprecated": false,
     "unstable": false,
@@ -6062,7 +6062,7 @@
    {
     "name": "sink_parquet",
     "kind": "method",
-    "signature": "sink_parquet(self, path: 'str | Path | IO[bytes] | PartitionBy', *, compression: 'str' = 'zstd', compression_level: 'int | None' = None, statistics: 'bool | str | dict[str, bool]' = True, row_group_size: 'int | None' = None, data_page_size: 'int | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, metadata: 'ParquetMetadata | None' = None, arrow_schema: 'ArrowSchemaExportable | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'LazyFrame | None'",
+    "signature": "sink_parquet(self, path: 'str | Path | IO[bytes] | PartitionBy', *, compression: 'str' = 'zstd', compression_level: 'int | None' = None, statistics: 'bool | str | dict[str, bool]' = True, row_group_size: 'int | None' = None, data_page_size: 'int | None' = None, maintain_order: 'bool' = True, storage_options: 'StorageOptionsDict | None' = None, credential_provider: \"CredentialProviderFunction | Literal['auto'] | None\" = 'auto', retries: 'int | None' = None, sync_on_close: 'SyncOnCloseMethod | None' = None, metadata: 'ParquetMetadata | None' = None, arrow_schema: 'ArrowSchemaExportable | None' = None, mkdir: 'bool' = False, lazy: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'LazyFrame | None'",
     "summary": "Evaluate the query in streaming mode and write to a Parquet file.",
     "deprecated": false,
     "unstable": false,
@@ -8455,7 +8455,7 @@
    {
     "name": "collect_all",
     "kind": "function",
-    "signature": "collect_all(lazy_frames: 'Iterable[LazyFrame]', *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, no_optimization: 'bool' = False, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>, engine: 'EngineType' = 'auto', lazy: 'bool' = False) -> 'list[DataFrame] | LazyFrame'",
+    "signature": "collect_all(lazy_frames: 'Iterable[LazyFrame]', *, type_coercion: 'bool' = True, predicate_pushdown: 'bool' = True, projection_pushdown: 'bool' = True, simplify_expression: 'bool' = True, no_optimization: 'bool' = False, slice_pushdown: 'bool' = True, comm_subplan_elim: 'bool' = True, comm_subexpr_elim: 'bool' = True, cluster_with_columns: 'bool' = True, collapse_joins: 'bool' = True, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>, engine: 'EngineType' = 'auto', lazy: 'bool' = False) -> 'list[DataFrame] | LazyFrame'",
     "summary": "Collect multiple LazyFrames at the same time.",
     "deprecated": false,
     "unstable": false,
@@ -8524,7 +8524,7 @@
    {
     "name": "collect_all_async",
     "kind": "function",
-    "signature": "collect_all_async(lazy_frames: 'Iterable[LazyFrame]', *, gevent: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'Awaitable[list[DataFrame]] | _GeventDataFrameResult[list[DataFrame]]'",
+    "signature": "collect_all_async(lazy_frames: 'Iterable[LazyFrame]', *, gevent: 'bool' = False, engine: 'EngineType' = 'auto', optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'Awaitable[list[DataFrame]] | _GeventDataFrameResult[list[DataFrame]]'",
     "summary": "Collect multiple LazyFrames at the same time asynchronously in thread pool.",
     "deprecated": false,
     "unstable": true,
@@ -8780,7 +8780,7 @@
    {
     "name": "explain_all",
     "kind": "function",
-    "signature": "explain_all(lazy_frames: 'Iterable[LazyFrame]', *, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object at 0x000001909B28E3C0>) -> 'str'",
+    "signature": "explain_all(lazy_frames: 'Iterable[LazyFrame]', *, optimizations: 'QueryOptFlags' = <polars.lazyframe.opt_flags.QueryOptFlags object>) -> 'str'",
     "summary": "Explain multiple LazyFrames as if passed to `collect_all`.",
     "deprecated": false,
     "unstable": false,

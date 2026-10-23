@@ -30,6 +30,7 @@ import polars as pl
 import polars.selectors as cs
 
 ROOT = Path(__file__).resolve().parent.parent
+MEMORY_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+>")
 UNSTABLE = re.compile(r"considered\s+\*\*unstable\*\*", re.I)
 # A directive at column 0 marks the whole object; an indented one sits under a parameter.
 DIRECTIVE = re.compile(r"^( *)\.\. (deprecated|warning)::[ \t]*(\S*)", re.M)
@@ -78,6 +79,8 @@ def describe(name: str, obj: object, kind: str) -> dict:
         signature = f"{name}{inspect.signature(obj)}" if kind != "property" else name
     except (TypeError, ValueError):
         signature = name
+    # Object defaults print with their memory address, which changes on every run.
+    signature = MEMORY_ADDRESS.sub(">", signature)
     # getattr_static: `pl.col` answers any attribute with an Expr, which has no truth value.
     try:
         deprecated_msg = inspect.getattr_static(obj, "__deprecated__")
