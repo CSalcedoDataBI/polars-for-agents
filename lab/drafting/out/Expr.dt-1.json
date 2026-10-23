@@ -1,0 +1,139 @@
+{
+ "chunk": "Expr.dt-1",
+ "group": "Expr.dt",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "to_string defaults to ISO with a space; use iso:strict for the T separator",
+   "applies_to": [
+    "Expr.dt.to_string",
+    "Expr.dt.strftime"
+   ],
+   "trap": "Calling `Expr.dt.to_string()` with no format on a Datetime gives ISO date and time parts separated by a space, not by `T`. APIs that expect strict ISO 8601 may reject that output. Pass `'iso:strict'` to get the `T` separator, or give an explicit chrono format. `Expr.dt.strftime` is an alias of `Expr.dt.to_string` but requires a format. Duration columns cannot use strftime patterns at all; only `'iso'` and `'polars'` are supported for them.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [datetime(2024, 5, 1, 8, 30)]})\nprint(df.select(\n    default_iso=pl.col(\"ts\").dt.to_string(),\n    iso_strict=pl.col(\"ts\").dt.to_string(\"iso:strict\"),\n    custom=pl.col(\"ts\").dt.strftime(\"%Y-%m-%dT%H:%M\"),\n).rows())",
+   "output": "[('2024-05-01 08:30:00.000000', '2024-05-01T08:30:00.000000', '2024-05-01T08:30')]"
+  },
+  {
+   "title": "replace_time_zone relabels the wall clock, convert_time_zone keeps the instant",
+   "applies_to": [
+    "Expr.dt.replace_time_zone",
+    "Expr.dt.convert_time_zone"
+   ],
+   "trap": "`Expr.dt.replace_time_zone` keeps the wall-clock reading, attaches a new zone and ignores the original zone, so the underlying timestamp changes. `Expr.dt.convert_time_zone` keeps the same instant and only changes how it is displayed. Calling `Expr.dt.convert_time_zone` on a naive column treats the values as UTC, whatever your system zone is. To declare which zone naive data is in, call `Expr.dt.replace_time_zone` first, then `Expr.dt.convert_time_zone`.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\nfmt = \"%Y-%m-%d %H:%M %z\"\ndf = pl.DataFrame({\"ts\": [datetime(2024, 7, 1, 12, 0)]})\nutc = df.with_columns(pl.col(\"ts\").dt.replace_time_zone(\"UTC\"))\nout = utc.select(\n    converted=pl.col(\"ts\").dt.convert_time_zone(\"Europe/Amsterdam\"),\n    replaced=pl.col(\"ts\").dt.replace_time_zone(\"Europe/Amsterdam\"),\n)\nprint(out.select(pl.all().dt.to_string(fmt)).rows())\n# Different instants: epoch seconds differ by 7200\nprint(out.select(\n    conv_s=pl.col(\"converted\").dt.epoch(\"s\"),\n    repl_s=pl.col(\"replaced\").dt.epoch(\"s\"),\n).rows())\n# Naive input to convert_time_zone is treated as UTC (14:00 +0200)\nnaive_conv = pl.col(\"ts\").dt.convert_time_zone(\"Europe/Amsterdam\")\nprint(df.select(naive_conv.dt.to_string(fmt)).rows())\n# Correct way to say naive data is local Amsterdam time (12:00 +0200)\nlocal = pl.col(\"ts\").dt.replace_time_zone(\"Europe/Amsterdam\")\nprint(df.select(local.dt.to_string(fmt)).rows())",
+   "output": "[('2024-07-01 14:00 +0200', '2024-07-01 12:00 +0200')]\n[(1719835200, 1719828000)]\n[('2024-07-01 14:00 +0200',)]\n[('2024-07-01 12:00 +0200',)]"
+  },
+  {
+   "title": "Use replace_time_zone(None) instead of the deprecated dt.datetime",
+   "applies_to": [
+    "Expr.dt.datetime",
+    "Expr.dt.replace_time_zone"
+   ],
+   "trap": "`Expr.dt.datetime` has been deprecated since 0.20.4 and emits a deprecation warning. Its job was to drop the time zone from a Datetime column, and `Expr.dt.replace_time_zone(None)` does the same thing. It keeps the wall-clock values and removes the zone, so use it in new code.",
+   "example": "import polars as pl\nimport warnings\nfrom datetime import datetime\n\ndf = pl.DataFrame(\n    {\"ts\": [datetime(2024, 1, 1, 9, 30)]},\n    schema={\"ts\": pl.Datetime(time_zone=\"UTC\")},\n)\nwith warnings.catch_warnings():\n    warnings.simplefilter(\"error\")\n    try:\n        df.select(pl.col(\"ts\").dt.datetime())\n    except Exception as e:\n        print(str(type(e)).split(\"'\")[1].split(\".\")[-1])\n\nout = df.with_columns(naive=pl.col(\"ts\").dt.replace_time_zone(None))\nprint(out.schema)\nprint(out.to_dicts())",
+   "output": "DeprecationWarning\nSchema({'ts': Datetime(time_unit='us', time_zone='UTC'), 'naive': Datetime(time_unit='us', time_zone=None)})\n[{'ts': datetime.datetime(2024, 1, 1, 9, 30, tzinfo=zoneinfo.ZoneInfo(key='UTC')), 'naive': datetime.datetime(2024, 1, 1, 9, 30)}]"
+  },
+  {
+   "title": "epoch and timestamp default to microseconds, not Unix seconds",
+   "applies_to": [
+    "Expr.dt.epoch",
+    "Expr.dt.timestamp"
+   ],
+   "trap": "`Expr.dt.epoch()` and `Expr.dt.timestamp()` both default to `time_unit='us'`. Code that expects Unix seconds or nanoseconds will be off by a large factor. For Unix seconds, pass `Expr.dt.epoch(time_unit='s')`. `Expr.dt.timestamp` only accepts `'ns'`, `'us'` and `'ms'`, so use `Expr.dt.epoch` when you need seconds or days.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [datetime(2001, 1, 1)]})\nout = df.select(\n    epoch_default_us=pl.col(\"ts\").dt.epoch(),\n    timestamp_default_us=pl.col(\"ts\").dt.timestamp(),\n    unix_seconds=pl.col(\"ts\").dt.epoch(time_unit=\"s\"),\n    unix_days=pl.col(\"ts\").dt.epoch(time_unit=\"d\"),\n    unix_ms=pl.col(\"ts\").dt.timestamp(\"ms\"),\n)\nprint(out.to_dicts())",
+   "output": "[{'epoch_default_us': 978307200000000, 'timestamp_default_us': 978307200000000, 'unix_seconds': 978307200, 'unix_days': 11323, 'unix_ms': 978307200000}]"
+  },
+  {
+   "title": "second() drops fractions and the sub-second fields are not additive",
+   "applies_to": [
+    "Expr.dt.second",
+    "Expr.dt.millisecond",
+    "Expr.dt.microsecond",
+    "Expr.dt.nanosecond"
+   ],
+   "trap": "`Expr.dt.second` returns an integer (Int8) by default, so 14.5 seconds comes back as 14. Pass `fractional=True` to get a Float64. `Expr.dt.millisecond`, `Expr.dt.microsecond` and `Expr.dt.nanosecond` each return the whole fractional part of the second in a different unit, so .5 s gives 500, 500000 and 500000000. Never add them together; pick the one unit you need.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [datetime(2024, 1, 1, 0, 0, 14, 500_000)]})\nout = df.select(\n    sec=pl.col(\"ts\").dt.second(),\n    sec_frac=pl.col(\"ts\").dt.second(fractional=True),\n    ms=pl.col(\"ts\").dt.millisecond(),\n    us=pl.col(\"ts\").dt.microsecond(),\n    ns=pl.col(\"ts\").dt.nanosecond(),\n    wrong_total_us=pl.col(\"ts\").dt.millisecond() * 1000\n    + pl.col(\"ts\").dt.microsecond(),\n)\nprint(out.schema)\nprint(out.to_dicts())",
+   "output": "Schema({'sec': Int8, 'sec_frac': Float64, 'ms': Int32, 'us': Int32, 'ns': Int32, 'wrong_total_us': Int32})\n[{'sec': 14, 'sec_frac': 14.5, 'ms': 500, 'us': 500000, 'ns': 500000000, 'wrong_total_us': 1000000}]"
+  },
+  {
+   "title": "Use offset_by for calendar months and years, and remember 1m means minute",
+   "applies_to": [
+    "Expr.dt.offset_by"
+   ],
+   "trap": "Adding a `timedelta` adds a fixed span of time, so adding 30 or 365 days drifts away from \"one month later\" or \"one year later\", especially across leap years. `Expr.dt.offset_by` understands calendar months and years. In its offset language `'1m'` means one minute and `'1mo'` means one calendar month, so writing `'1m'` for a month gives silently wrong results. A negative offset uses a single leading minus sign, for example `'-1y2mo'`.",
+   "example": "import polars as pl\nfrom datetime import datetime, timedelta\n\ndf = pl.DataFrame({\"d\": [datetime(2024, 1, 15), datetime(2023, 3, 1)]})\nout = df.with_columns(\n    plus_30d=pl.col(\"d\") + timedelta(days=30),\n    plus_1mo=pl.col(\"d\").dt.offset_by(\"1mo\"),\n    plus_365d=pl.col(\"d\") + timedelta(days=365),\n    plus_1y=pl.col(\"d\").dt.offset_by(\"1y\"),\n    oops_1m_is_minute=pl.col(\"d\").dt.offset_by(\"1m\"),\n    minus_1y2mo=pl.col(\"d\").dt.offset_by(\"-1y2mo\"),\n)\nfor row in out.select(pl.all().dt.to_string(\"%Y-%m-%d %H:%M\")).to_dicts():\n    print(row)",
+   "output": "{'d': '2024-01-15 00:00', 'plus_30d': '2024-02-14 00:00', 'plus_1mo': '2024-02-15 00:00', 'plus_365d': '2025-01-14 00:00', 'plus_1y': '2025-01-15 00:00', 'oops_1m_is_minute': '2024-01-15 00:01', 'minus_1y2mo': '2022-11-15 00:00'}\n{'d': '2023-03-01 00:00', 'plus_30d': '2023-03-31 00:00', 'plus_1mo': '2023-04-01 00:00', 'plus_365d': '2024-02-29 00:00', 'plus_1y': '2024-03-01 00:00', 'oops_1m_is_minute': '2023-03-01 00:01', 'minus_1y2mo': '2022-01-01 00:00'}"
+  },
+  {
+   "title": "dt.round goes to the nearest bucket boundary; use dt.truncate to floor",
+   "applies_to": [
+    "Expr.dt.round",
+    "Expr.dt.truncate"
+   ],
+   "trap": "`Expr.dt.round` maps values in the first half of an interval to the start of the bucket and values in the second half to the end of the bucket, so 01:40 rounded to `'1h'` becomes 02:00. If you want every value floored to the start of its bucket (for example for hourly grouping keys), use `Expr.dt.truncate` instead. Also remember that `'1m'` is minutes and `'1mo'` is months in `every`.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [\n    datetime(2024, 1, 1, 1, 20),\n    datetime(2024, 1, 1, 1, 40),\n]})\nout = df.with_columns(\n    rounded=pl.col(\"ts\").dt.round(\"1h\"),\n    truncated=pl.col(\"ts\").dt.truncate(\"1h\"),\n)\nprint(out.columns)\nprint(out.select(pl.all().dt.to_string(\"%H:%M\")).rows())",
+   "output": "['ts', 'rounded', 'truncated']\n[('01:20', '01:00', '01:00'), ('01:40', '02:00', '01:00')]"
+  },
+  {
+   "title": "add_business_days raises on weekend start dates unless you set roll",
+   "applies_to": [
+    "Expr.dt.add_business_days",
+    "Expr.dt.is_business_day"
+   ],
+   "trap": "`Expr.dt.add_business_days` defaults to `roll='raise'`, so the whole query fails if any start date falls on a non-business day. Pass `roll='forward'` or `roll='backward'` to say how such dates should move before counting. Use `Expr.dt.is_business_day` to find the offending rows first. Both `Expr.dt.add_business_days` and `Expr.dt.is_business_day` are marked unstable and may change without notice.",
+   "example": "import polars as pl\nfrom datetime import date\n\n# 2020-01-04 is a Saturday, 2020-01-06 is a Monday\ndf = pl.DataFrame({\"start\": [date(2020, 1, 4), date(2020, 1, 6)]})\ntry:\n    df.select(pl.col(\"start\").dt.add_business_days(1))\nexcept Exception as e:\n    print(str(type(e)).split(\"'\")[1].split(\".\")[-1])\n\nout = df.with_columns(\n    is_bday=pl.col(\"start\").dt.is_business_day(),\n    fwd=pl.col(\"start\").dt.add_business_days(1, roll=\"forward\"),\n    back=pl.col(\"start\").dt.add_business_days(1, roll=\"backward\"),\n)\nfor row in out.to_dicts():\n    print(row)",
+   "output": "ComputeError\n{'start': datetime.date(2020, 1, 4), 'is_bday': False, 'fwd': datetime.date(2020, 1, 7), 'back': datetime.date(2020, 1, 6)}\n{'start': datetime.date(2020, 1, 6), 'is_bday': True, 'fwd': datetime.date(2020, 1, 7), 'back': datetime.date(2020, 1, 7)}"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows the space and `T` separators, and the docstrings support the `strftime` alias, its required format and the Duration format restriction.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows the 7200-second instant difference and naive values being converted as if UTC, matching both docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows the DeprecationWarning and that `replace_time_zone(None)` keeps the wall clock, and the docstring gives the 0.20.4 deprecation.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output confirms both functions default to microseconds, and the docstrings confirm `timestamp` accepts only ns, us and ms.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The schema and values show Int8 versus Float64 and the 500/500000/500000000 overlap, which makes summing them wrong.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows the timedelta drift including the leap-day case, `'1m'` adding a minute and the `'-1y2mo'` result, all consistent with the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows 01:40 rounding to 02:00 while truncate floors it to 01:00, matching the docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows a ComputeError on the Saturday start date and the roll results, and the docstrings mark both APIs unstable.",
+   "trap": ""
+  }
+ ]
+}

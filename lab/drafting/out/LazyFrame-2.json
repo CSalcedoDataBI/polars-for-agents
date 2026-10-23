@@ -1,0 +1,132 @@
+{
+ "chunk": "LazyFrame-2",
+ "group": "LazyFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "LazyFrame.rolling windows are right-closed (t - period, t] by default",
+   "applies_to": [
+    "LazyFrame.rolling"
+   ],
+   "trap": "By default `LazyFrame.rolling` uses `closed='right'`, so each window is `(t - period, t]`. The left edge is excluded, which means `period=\"2i\"` covers 2 index values, not 3. Pass `closed='both'` (or adjust `period`/`offset`) if you need both edges included. The `index_column` must be sorted ascending (within each group when `group_by` is set). The method returns a group-by object, so you must call `.agg(...)` on it.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"t\": [1, 2, 3, 4], \"v\": [1, 1, 1, 1]})\n\nright = lf.rolling(\"t\", period=\"2i\").agg(pl.col(\"v\").sum().alias(\"s\"))\nboth = lf.rolling(\"t\", period=\"2i\", closed=\"both\").agg(\n    pl.col(\"v\").sum().alias(\"s\")\n)\n\nprint(right.collect().sort(\"t\")[\"s\"].to_list())  # [1, 2, 2, 2]\nprint(both.collect().sort(\"t\")[\"s\"].to_list())   # [1, 2, 3, 3]\n",
+   "output": "[1, 2, 2, 2]\n[1, 2, 3, 3]"
+  },
+  {
+   "title": "LazyFrame.quantile defaults to nearest interpolation, not linear",
+   "applies_to": [
+    "LazyFrame.quantile"
+   ],
+   "trap": "`LazyFrame.quantile` uses `interpolation='nearest'` by default, so it returns an actual data value rather than an interpolated one. For example, `quantile(0.7)` on `[1, 2, 3, 4]` gives `3.0`, while `interpolation='linear'` gives `3.1`. Code ported from tools that interpolate linearly by default, such as pandas, silently returns a different number. Pass `interpolation='linear'` explicitly when you expect linear quantiles.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3, 4]})\n\nnearest = lf.quantile(0.7).collect().item()\nlinear = lf.quantile(0.7, interpolation=\"linear\").collect().item()\n\nprint(nearest)  # 3.0 (default: nearest)\nprint(round(linear, 6))  # 3.1 (pandas-style linear)\n",
+   "output": "3.0\n3.1"
+  },
+  {
+   "title": "LazyFrame.remove keeps rows where the predicate is null",
+   "applies_to": [
+    "LazyFrame.remove"
+   ],
+   "trap": "`LazyFrame.remove` drops only rows where the predicate is exactly True. Rows where it evaluates to `null`, for example a comparison against a null value, are **retained**. This means `remove(cond)` is not the same as `LazyFrame.filter(~cond)`: the filter drops the null row and the remove keeps it. If null rows should also be discarded, add the null case explicitly, e.g. `cond | pl.col(c).is_null()`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"id\": [1, 2, 3], \"bar\": [7, None, 1]})\ncond = pl.col(\"bar\") >= 5\n\n# null comparison -> null -> row is kept by remove (ids 2 and 3)\nprint(lf.remove(cond).collect().get_column(\"id\").to_list())\n\n# filter on the negation drops the null row (only id 3)\nprint(lf.filter(~cond).collect().get_column(\"id\").to_list())\n\n# handle nulls explicitly to remove them too (only id 3)\nprint(lf.remove(cond | pl.col(\"bar\").is_null()).collect().get_column(\"id\").to_list())\n",
+   "output": "[2, 3]\n[3]\n[3]"
+  },
+  {
+   "title": "Declare the output schema and disable pushdown when a map_batches UDF changes columns or aggregates",
+   "applies_to": [
+    "LazyFrame.map_batches"
+   ],
+   "trap": "With `schema=None`, `LazyFrame.map_batches` assumes the function returns the same schema as its input. A UDF that adds columns therefore fails the default `validate_output_schema=True` check. `predicate_pushdown` defaults to True, so a later filter may be pushed past the UDF. The docstring warns that this changes the results of any aggregation done inside the UDF. Pass the real `schema=` and set `predicate_pushdown=False` when the function aggregates.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3]})\n\ndef add_total(df):\n    return df.with_columns(pl.col(\"a\").sum().alias(\"total\"))\n\ntry:\n    lf.map_batches(add_total).collect()  # schema assumed unchanged\nexcept Exception as e:\n    print(type(e))\n\nok = lf.map_batches(\n    add_total,\n    schema={\"a\": pl.Int64, \"total\": pl.Int64},\n    predicate_pushdown=False,\n).filter(pl.col(\"a\") > 1)\nout = ok.collect()\n# total is 6 on every remaining row\nprint(out.get_column(\"a\").to_list(), out.get_column(\"total\").to_list())\n",
+   "output": "<class 'polars.exceptions.ComputeError'>\n[2, 3] [6, 6]"
+  },
+  {
+   "title": "merge_sorted does not sort: both inputs must already be ascending by the key",
+   "applies_to": [
+    "LazyFrame.merge_sorted"
+   ],
+   "trap": "`LazyFrame.merge_sorted` is a merge step, not a sort-and-concat. The caller must make sure both frames are sorted **ascending** by `key`; otherwise the docstring says the output will not make sense. The schemas of both frames must be equal, and row order among equal keys is not guaranteed. Call `.sort(key)` on both sides first, or use `pl.concat` followed by a sort.",
+   "example": "import polars as pl\n\na = pl.LazyFrame({\"k\": [3, 1], \"v\": [\"a3\", \"a1\"]})\nb = pl.LazyFrame({\"k\": [2], \"v\": [\"b2\"]})\n\ntry:\n    bad = a.merge_sorted(b, key=\"k\").collect()  # inputs not sorted\n    print(bad.get_column(\"k\").to_list(), bad.get_column(\"k\").is_sorted())\nexcept Exception as e:\n    print(type(e))\n\ngood = a.sort(\"k\").merge_sorted(b.sort(\"k\"), key=\"k\").collect()\nprint(good.get_column(\"k\").to_list(), good.get_column(\"k\").is_sorted())\n",
+   "output": "[2, 3, 1] False\n[1, 2, 3] True"
+  },
+  {
+   "title": "LazyFrame.pivot requires on_columns up front",
+   "applies_to": [
+    "LazyFrame.pivot"
+   ],
+   "trap": "`LazyFrame.pivot` has a required parameter `on_columns` that lists the values of `on` to turn into output columns. Eager-style calls that pass only `on`, `index` and `values` raise `TypeError`. With `aggregate_function=None`, a duplicate `index`/`on` combination raises an error. Because `maintain_order=False` is the default, the output row order is not guaranteed, so sort explicitly.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame(\n    {\"name\": [\"a\", \"a\", \"b\"], \"subject\": [\"x\", \"y\", \"x\"], \"score\": [1, 2, 3]}\n)\n\ntry:\n    lf.pivot(on=\"subject\", index=\"name\", values=\"score\")\nexcept TypeError:\n    print(\"TypeError\")\n\nout = lf.pivot(on=\"subject\", on_columns=[\"x\", \"y\"], index=\"name\", values=\"score\")\nprint(out.collect().sort(\"name\").to_dicts())\n",
+   "output": "TypeError\n[{'name': 'a', 'x': 1, 'y': 2}, {'name': 'b', 'x': 3, 'y': None}]"
+  },
+  {
+   "title": "LazyFrame.melt is deprecated: use unpivot with index and on",
+   "applies_to": [
+    "LazyFrame.melt",
+    "LazyFrame.unpivot"
+   ],
+   "trap": "`LazyFrame.melt` is the pandas-style name and has been deprecated since 1.0.0; it emits a `DeprecationWarning`. Use `LazyFrame.unpivot` instead. The parameters are renamed: `id_vars` becomes `index` and `value_vars` becomes `on`. Passing the old keyword names to `LazyFrame.unpivot` will not work.",
+   "example": "import polars as pl\nimport warnings\n\nlf = pl.LazyFrame({\"id\": [1, 2], \"x\": [10, 20], \"y\": [30, 40]})\n\nwith warnings.catch_warnings():\n    warnings.simplefilter(\"error\")\n    try:\n        lf.melt(id_vars=\"id\", value_vars=[\"x\", \"y\"])\n    except DeprecationWarning:\n        print(\"DeprecationWarning\")\n\nwith warnings.catch_warnings():\n    warnings.simplefilter(\"ignore\")\n    old = lf.melt(id_vars=\"id\", value_vars=[\"x\", \"y\"])\n\nnew = lf.unpivot(on=[\"x\", \"y\"], index=\"id\")\nprint(new.collect().to_dicts())\nprint(old.collect().equals(new.collect()))\n",
+   "output": "DeprecationWarning\n[{'id': 1, 'variable': 'x', 'value': 10}, {'id': 2, 'variable': 'x', 'value': 20}, {'id': 1, 'variable': 'y', 'value': 30}, {'id': 2, 'variable': 'y', 'value': 40}]\nTrue"
+  },
+  {
+   "title": "LazyFrame.serialize returns binary bytes by default, not JSON",
+   "applies_to": [
+    "LazyFrame.serialize",
+    "LazyFrame.deserialize"
+   ],
+   "trap": "The docstring summary mentions JSON, but the default is `format='binary'`, which returns `bytes`. The `'json'` format is deprecated. Read the result back with `LazyFrame.deserialize` wrapped in `io.BytesIO`. Serialized plans are not stable across Polars versions, so do not use them as a long-term storage format.",
+   "example": "import polars as pl\nimport io\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3]}).sum()\n\ndata = lf.serialize()\nprint(isinstance(data, bytes), isinstance(data, str))  # True False\n\nrestored = pl.LazyFrame.deserialize(io.BytesIO(data))\nprint(restored.collect().to_dicts())\n",
+   "output": "True False\n[{'a': 6}]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output and docstring confirm the right-closed default, `closed='both'` including the left edge, the sorted `index_column` requirement and the group-by return type.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "fix",
+   "reason": "The `nearest` default is confirmed by the signature and output, but the claim about most SQL engines is not supported by the output or docstrings.",
+   "trap": "`LazyFrame.quantile` uses `interpolation='nearest'` by default, so it returns an actual data value rather than an interpolated one. For example, `quantile(0.7)` on `[1, 2, 3, 4]` gives `3.0`, while `interpolation='linear'` gives `3.1`. Code ported from tools that interpolate linearly by default, such as pandas, silently returns a different number. Pass `interpolation='linear'` explicitly when you expect linear quantiles."
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `remove` keeping the null row while `filter(~cond)` drops it, and the docstring states that null-predicate rows are retained.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The `ComputeError` with the default schema and the docstring warning about predicate pushdown and aggregations support every claim.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The unsorted input silently produced `[2, 3, 1]`, and the ascending, equal-schema and equal-key ordering claims all come from the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The `TypeError` without `on_columns` is shown in the output, and the duplicate-error and `maintain_order` claims follow from the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The deprecation since 1.0.0, the `DeprecationWarning`, the parameter renames and the absence of `id_vars` from the `unpivot` signature are all supported.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows `bytes`, and the docstring confirms the misleading JSON summary, the deprecated `json` format, the `BytesIO` round-trip and the cross-version instability.",
+   "trap": ""
+  }
+ ]
+}

@@ -1,0 +1,135 @@
+{
+ "chunk": "DataFrame-1",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Comparisons against null yield null, so `filter` silently drops those rows",
+   "applies_to": [
+    "DataFrame.filter"
+   ],
+   "trap": "`DataFrame.filter` keeps only rows where the predicate is True. A comparison with a null value gives null, not True or False, so the row is discarded. Pandas users expect `col != 'ok'` to keep missing values, because NaN != 'ok' is True there; in Polars those rows vanish without any warning. Use `Expr.ne_missing` / `Expr.eq_missing`, or add an explicit `| pl.col(...).is_null()` when nulls should be kept.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 2, 3], \"status\": [\"ok\", None, \"bad\"]})\n\n# Habit: \"everything that is not ok\" -- the null row is silently dropped\nwrong = df.filter(pl.col(\"status\") != \"ok\")\nprint(wrong[\"id\"].to_list())  # [3]\n\n# Null-aware comparison keeps the missing status\nright = df.filter(pl.col(\"status\").ne_missing(\"ok\"))\nprint(right[\"id\"].to_list())  # [2, 3]\n\n# Equivalent explicit form\nalso = df.filter((pl.col(\"status\") != \"ok\") | pl.col(\"status\").is_null())\nprint(also[\"id\"].to_list())  # [2, 3]\n",
+   "output": "[3]\n[2, 3]\n[2, 3]"
+  },
+  {
+   "title": "NaN and null are different values: the null methods ignore NaN and the NaN methods ignore null",
+   "applies_to": [
+    "DataFrame.drop_nulls",
+    "DataFrame.drop_nans",
+    "DataFrame.fill_null",
+    "DataFrame.fill_nan"
+   ],
+   "trap": "In pandas, NaN is the missing-value marker, so `dropna`/`fillna` remove it. In Polars, missing data is null. NaN is an ordinary floating-point value. `DataFrame.drop_nulls` and `DataFrame.fill_null` leave NaN untouched, and `DataFrame.fill_nan` leaves nulls untouched. To handle both, convert NaN to null first with `fill_nan(None)`, then apply the null method.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1.0, float(\"nan\"), None]})\n\n# drop_nulls keeps the NaN row\nprint(df.drop_nulls()[\"x\"].to_list())  # [1.0, nan]\n\n# fill_null does not touch NaN, and fill_nan does not touch null\nprint(df.fill_null(0.0)[\"x\"].to_list())  # [1.0, nan, 0.0]\nprint(df.fill_nan(0.0)[\"x\"].to_list())   # [1.0, 0.0, None]\n\n# Treat both as missing: NaN -> null, then fill nulls\nprint(df.fill_nan(None).fill_null(0.0)[\"x\"].to_list())  # [1.0, 0.0, 0.0]\n",
+   "output": "[1.0, nan]\n[1.0, nan, 0.0]\n[1.0, 0.0, None]\n[1.0, 0.0, 0.0]"
+  },
+  {
+   "title": "`group_by` output order is not guaranteed unless you ask for it",
+   "applies_to": [
+    "DataFrame.group_by"
+   ],
+   "trap": "Pandas `groupby` sorts the group keys by default, but `DataFrame.group_by` does not guarantee any group order. Code that takes the first row or zips the result against another list can therefore silently misalign. Pass `maintain_order=True` to get groups in input (first-appearance) order, which is slower and blocks the streaming engine, or call `.sort(...)` on the result. The order of rows within each group is always preserved, regardless of `maintain_order`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"k\": [\"b\", \"a\", \"b\", \"c\"], \"v\": [1, 2, 3, 4]})\n\n# Default df.group_by(\"k\") gives groups in arbitrary order -- do not rely on it\n\n# Order of first appearance\nordered = df.group_by(\"k\", maintain_order=True).agg(pl.col(\"v\").sum())\nprint(ordered.rows())  # [('b', 4), ('a', 2), ('c', 4)]\n\n# Pandas-like sorted keys: sort explicitly\nsorted_out = df.group_by(\"k\").agg(pl.col(\"v\").sum()).sort(\"k\")\nprint(sorted_out.rows())  # [('a', 2), ('b', 4), ('c', 4)]\n",
+   "output": "[('b', 4), ('a', 2), ('c', 4)]\n[('a', 2), ('b', 4), ('c', 4)]"
+  },
+  {
+   "title": "Most methods return a new frame, but `extend` and `drop_in_place` mutate the original",
+   "applies_to": [
+    "DataFrame.drop",
+    "DataFrame.drop_in_place",
+    "DataFrame.extend"
+   ],
+   "trap": "`DataFrame.drop` returns a new frame, so calling it without reassigning the result has no effect. Some methods do mutate the frame. `DataFrame.drop_in_place` removes the column from the frame and returns it as a Series. `DataFrame.extend` appends to the frame's own memory and returns the frame only for convenience. To keep the original unchanged, call `extend` on a `DataFrame.clone()`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\ndf.drop(\"b\")  # result discarded: df is unchanged\nprint(df.columns)  # ['a', 'b']\n\ns = df.drop_in_place(\"b\")  # mutates df and returns the Series\nprint(s.name, df.columns)  # b ['a']\n\ndf1 = pl.DataFrame({\"a\": [1, 2]})\ndf2 = pl.DataFrame({\"a\": [3]})\ncombined = df1.clone().extend(df2)  # df1 untouched\nprint(df1.height, combined.height)  # 2 3\n\ndf1.extend(df2)  # mutates df1 in place\nprint(df1.height)  # 3\n",
+   "output": "['a', 'b']\nb ['a']\n2 3\n3"
+  },
+  {
+   "title": "`bottom_k` skips nulls and returns unordered rows; `sort().head()` puts nulls first",
+   "applies_to": [
+    "DataFrame.bottom_k"
+   ],
+   "trap": "`DataFrame.bottom_k` always prefers non-null values, even with `reverse=True`. Its output is not guaranteed to be in any order, so call `.sort(...)` afterwards if order matters. `sort(...).head(k)` is not equivalent, because an ascending sort puts nulls first by default, so the null rows come out as the \"smallest\". The old `descending` parameter was renamed `reverse` in 1.0.0.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"name\": [\"a\", \"b\", \"c\", \"d\"], \"score\": [3, None, 1, 2]})\n\n# sort + head: the null row counts as the smallest\nprint(df.sort(\"score\").head(2).rows())  # [('b', None), ('c', 1)]\n\n# bottom_k ignores nulls; sort the result because its order is unspecified\nprint(df.bottom_k(2, by=\"score\").sort(\"score\").rows())  # [('c', 1), ('d', 2)]\n\n# reverse=True (formerly descending) gives the largest values, still no nulls\nprint(df.bottom_k(2, by=\"score\", reverse=True).sort(\"score\").rows())  # [('d', 2), ('a', 3)]\n",
+   "output": "[('b', None), ('c', 1)]\n[('c', 1), ('d', 2)]\n[('d', 2), ('a', 3)]"
+  },
+  {
+   "title": "`cast` is strict by default, and `strict=False` silently turns bad values into nulls",
+   "applies_to": [
+    "DataFrame.cast"
+   ],
+   "trap": "`DataFrame.cast` defaults to `strict=True`, so a single unparsable string or out-of-range value makes the whole cast raise an error. With `strict=False`, the cast succeeds and every invalid value becomes null without any warning. This can quietly corrupt aggregates later. If you use `strict=False`, check `Series.null_count` afterwards to see how many values were lost.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [\"1\", \"2\", \"oops\"]})\n\ntry:\n    df.cast({\"x\": pl.Int64})\nexcept Exception as e:\n    print(type(e))\n\nlenient = df.cast({\"x\": pl.Int64}, strict=False)\nprint(lenient[\"x\"].to_list())     # [1, 2, None]\nprint(lenient[\"x\"].null_count())  # 1 value silently lost\n",
+   "output": "<class 'polars.exceptions.InvalidOperationError'>\n[1, 2, None]\n1"
+  },
+  {
+   "title": "`drop` raises on missing columns unless `strict=False`",
+   "applies_to": [
+    "DataFrame.drop"
+   ],
+   "trap": "By default, `DataFrame.drop` checks that every named column exists and raises an error if any is missing. Defensive cleanup code such as \"drop these columns if present\" therefore fails on frames that lack one of them. Pass `strict=False` to ignore names that are not in the schema.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1], \"b\": [2]})\n\ntry:\n    df.drop(\"b\", \"c\")\nexcept Exception as e:\n    print(type(e))\n\nprint(df.drop(\"b\", \"c\", strict=False).columns)  # ['a']\n",
+   "output": "<class 'polars.exceptions.ColumnNotFoundError'>\n['a']"
+  },
+  {
+   "title": "`DataFrame.approx_n_unique` is deprecated and only approximate",
+   "applies_to": [
+    "DataFrame.approx_n_unique"
+   ],
+   "trap": "`DataFrame.approx_n_unique` has been deprecated since 0.20.11 and emits a deprecation warning. Replace it with `DataFrame.select` combined with `Expr.approx_n_unique`, for example `df.select(pl.all().approx_n_unique())`. That method uses HyperLogLog++, so its result is an estimate. When you need an exact distinct count per column, use `Expr.n_unique` instead.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3, 4], \"b\": [1, 2, 1, 1]})\n\n# Replacement for the deprecated df.approx_n_unique()\napprox = df.select(pl.all().approx_n_unique())\nprint(approx.to_dicts())\n\n# Exact distinct counts per column\nexact = df.select(pl.all().n_unique())\nprint(exact.to_dicts())  # [{'a': 4, 'b': 2}]\n",
+   "output": "[{'a': 4, 'b': 2}]\n[{'a': 4, 'b': 2}]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The filter docstring and the output ([3] vs [2, 3]) support every claim, including null-aware `ne_missing`.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "All four outputs show the null and NaN methods ignoring each other, and `fill_nan(None)` followed by `fill_null` handling both.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "fix",
+   "reason": "The docstrings only say the default order is not guaranteed; the claim that it 'can change between runs' is not shown by the docstrings or the example.",
+   "trap": "Pandas `groupby` sorts the group keys by default, but `DataFrame.group_by` does not guarantee any group order. Code that takes the first row or zips the result against another list can therefore silently misalign. Pass `maintain_order=True` to get groups in input (first-appearance) order, which is slower and blocks the streaming engine, or call `.sort(...)` on the result. The order of rows within each group is always preserved, regardless of `maintain_order`."
+  },
+  {
+   "index": 3,
+   "verdict": "fix",
+   "reason": "'Polars has no `inplace=` argument' and 'clone is cheap' are not supported by the docstrings or the output.",
+   "trap": "`DataFrame.drop` returns a new frame, so calling it without reassigning the result has no effect. Some methods do mutate the frame. `DataFrame.drop_in_place` removes the column from the frame and returns it as a Series. `DataFrame.extend` appends to the frame's own memory and returns the frame only for convenience. To keep the original unchanged, call `extend` on a `DataFrame.clone()`."
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The `bottom_k` docstring (null preference, unordered output, `reverse` rename in 1.0.0) and the output showing nulls first after `sort` support every claim.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The `cast` docstring and the output (InvalidOperationError under strict, then [1, 2, None] with null_count 1) support every claim.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows ColumnNotFoundError by default and success with `strict=False`, matching the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The deprecation message, the 0.20.11 version, the replacement expression and the HyperLogLog++ estimation all come from the docstring, and the output shows that `n_unique` gives exact counts.",
+   "trap": ""
+  }
+ ]
+}

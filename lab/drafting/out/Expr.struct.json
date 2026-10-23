@@ -1,0 +1,135 @@
+{
+ "chunk": "Expr.struct",
+ "group": "Expr.struct",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Inside struct.with_fields use pl.field for struct fields, not pl.col or bare strings",
+   "applies_to": [
+    "Expr.struct.with_fields",
+    "pl.field",
+    "pl.col"
+   ],
+   "trap": "Inside `Expr.struct.with_fields`, `pl.col(...)` refers to a **top-level DataFrame column**, not to a field of the struct; the docstring example itself uses `pl.col(\"multiply\")` to pull in an outer column. Per the docstring, strings passed positionally are parsed as column names, not as struct fields. If the frame has a column with the same name as a struct field, `pl.col` silently computes on the outer column. Use `pl.field(\"name\")` to reference the struct's own fields.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [100, 200], \"s\": [{\"x\": 1, \"y\": 10}, {\"x\": 3, \"y\": 20}]})\n\n# Wrong: pl.col(\"x\") is the outer column, not s.x\nwrong = df.select(pl.col(\"s\").struct.with_fields(x2=pl.col(\"x\") * 2).struct.field(\"x2\"))\n\n# Right: pl.field(\"x\") is the struct's own field\nright = df.select(pl.col(\"s\").struct.with_fields(x2=pl.field(\"x\") * 2).struct.field(\"x2\"))\n\nprint(wrong[\"x2\"].to_list())  # [200, 400]\nprint(right[\"x2\"].to_list())  # [2, 6]\n",
+   "output": "[200, 400]\n[2, 6]"
+  },
+  {
+   "title": "struct.unnest inside with_columns silently overwrites same-named columns",
+   "applies_to": [
+    "Expr.struct.unnest",
+    "Expr.struct.field",
+    "DataFrame.with_columns",
+    "Expr.name.prefix_fields"
+   ],
+   "trap": "`Expr.struct.unnest` and `Expr.struct.field` name their output columns after the **field names**, not after the struct column. Inside `DataFrame.with_columns`, a field whose name matches an existing column replaces that column without any warning. The struct column itself is also kept. To avoid collisions, prefix the field names first with `Expr.name.prefix_fields`, or alias the result of `Expr.struct.field`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [\"keep\", \"keep\"], \"s\": [{\"a\": 1, \"b\": 2}, {\"a\": 3, \"b\": 4}]})\n\n# Field 'a' silently replaces the top-level column 'a'\nclobbered = df.with_columns(pl.col(\"s\").struct.unnest())\nprint(clobbered.columns, clobbered[\"a\"].to_list())\n\n# Prefix the fields so nothing collides\nsafe = df.with_columns(pl.col(\"s\").name.prefix_fields(\"s_\").struct.unnest())\nprint(safe.columns, safe[\"a\"].to_list())\n",
+   "output": "['a', 's', 'b'] [1, 3]\n['a', 's', 's_a', 's_b'] ['keep', 'keep']"
+  },
+  {
+   "title": "rename_fields is positional, not a mapping",
+   "applies_to": [
+    "Expr.struct.rename_fields",
+    "Expr.name.map_fields"
+   ],
+   "trap": "`Expr.struct.rename_fields` takes a list of new names and applies them **in the order of the struct's existing fields**. It is not an `{old: new}` mapping. If you list the names in the wrong order, the labels land on the wrong data and no error is raised. To rename only some fields by name, use `Expr.name.map_fields` with a lookup function.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [{\"id\": 1, \"name\": \"a\"}, {\"id\": 2, \"name\": \"b\"}]})\n\n# Intent: rename name -> label. Names are applied by position, so this mislabels.\nwrong = df.select(pl.col(\"s\").struct.rename_fields([\"label\", \"id\"]))\nprint(wrong.unnest(\"s\").to_dicts())  # 'label' now holds the ids\n\n# Rename one field by name\nmapping = {\"name\": \"label\"}\nright = df.select(pl.col(\"s\").name.map_fields(lambda n: mapping.get(n, n)))\nprint(right.unnest(\"s\").to_dicts())\n",
+   "output": "[{'label': 1, 'id': 'a'}, {'label': 2, 'id': 'b'}]\n[{'id': 1, 'label': 'a'}, {'id': 2, 'label': 'b'}]"
+  },
+  {
+   "title": "Same field from two structs collides in select; alias it",
+   "applies_to": [
+    "Expr.struct.field",
+    "DataFrame.select"
+   ],
+   "trap": "`Expr.struct.field(\"score\")` produces a column named `score`, no matter which struct it came from. If you select the same field from two struct columns, the output names are duplicated and `DataFrame.select` raises an error. Give each result a unique name with `Expr.alias`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"home\": [{\"score\": 1}], \"away\": [{\"score\": 2}]})\n\ntry:\n    df.select(\n        pl.col(\"home\").struct.field(\"score\"),\n        pl.col(\"away\").struct.field(\"score\"),\n    )\nexcept Exception as e:\n    print(str(type(e)).split(\".\")[-1][:-2])\n\nok = df.select(\n    pl.col(\"home\").struct.field(\"score\").alias(\"home_score\"),\n    pl.col(\"away\").struct.field(\"score\").alias(\"away_score\"),\n)\nprint(ok.to_dicts())\n",
+   "output": "DuplicateError\n[{'home_score': 1, 'away_score': 2}]"
+  },
+  {
+   "title": "No dotted paths in struct.field; chain calls for nested structs",
+   "applies_to": [
+    "Expr.struct.field"
+   ],
+   "trap": "`Expr.struct.field` looks up a field name at one level of nesting only. A dotted path like `\"a.b\"` (a JSON or SQL habit) is treated as a field literally named `a.b`. No such field exists, so the call fails. To reach a nested field, chain the calls: `.struct.field(\"a\").struct.field(\"b\")`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [{\"a\": {\"b\": 1}}, {\"a\": {\"b\": 2}}]})\n\ntry:\n    df.select(pl.col(\"s\").struct.field(\"a.b\"))\nexcept Exception as e:\n    print(str(type(e)).split(\".\")[-1][:-2])\n\nout = df.select(pl.col(\"s\").struct.field(\"a\").struct.field(\"b\"))\nprint(out.to_dicts())\n",
+   "output": "StructFieldNotFoundError\n[{'b': 1}, {'b': 2}]"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "Old field names stop working after rename_fields",
+    "applies_to": [
+     "Expr.struct.rename_fields",
+     "Expr.struct.field"
+    ],
+    "trap": "After `Expr.struct.rename_fields`, the previous field names no longer exist. Any later `Expr.struct.field` call that still uses an old name raises an error. In longer pipelines, either rename at the end or update every downstream field reference.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [{\"aaa\": 1, \"bbb\": \"x\"}]})\nrenamed = df.select(pl.col(\"s\").struct.rename_fields([\"www\", \"xxx\"]))\n\ntry:\n    renamed.select(pl.col(\"s\").struct.field(\"aaa\"))\nexcept Exception as e:\n    print(str(type(e)).split(\".\")[-1][:-2])\n\nprint(renamed.select(pl.col(\"s\").struct.field(\"www\")).to_dicts())\n",
+    "output": "StructFieldNotFoundError\n[{'www': 1}]"
+   },
+   "problems": [
+    "verify: dropped - The docstring itself calls this behaviour obvious, so it is trivia an agent would not get wrong."
+   ]
+  },
+  {
+   "note": {
+    "title": "json_encode only works on structs; build one with pl.struct first",
+    "applies_to": [
+     "Expr.struct.json_encode",
+     "pl.struct"
+    ],
+    "trap": "`Expr.struct.json_encode` is a struct method. Calling it on a plain column raises an error instead of serialising the value. To turn several columns into one JSON string per row, wrap them in `pl.struct(...)` first, then call `Expr.struct.json_encode`.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [\"x\", \"y\"]})\n\ntry:\n    df.select(pl.col(\"a\").struct.json_encode())\nexcept Exception as e:\n    print(str(type(e)).split(\".\")[-1][:-2])\n\nout = df.select(pl.struct(\"a\", \"b\").struct.json_encode().alias(\"json\"))\nprint(out[\"json\"].to_list())\n",
+    "output": "['{\"a\":1,\"b\":\"x\"}', '{\"a\":2,\"b\":\"y\"}']"
+   },
+   "problems": [
+    "verify: dropped - The output contains no exception name, so calling `Expr.struct.json_encode` on the Int64 column did not raise, which contradicts the trap."
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The output confirms the `pl.col` claim, but the docstring only says strings are parsed as column names, so the bare-string claim should be worded that way.",
+   "trap": "Inside `Expr.struct.with_fields`, `pl.col(...)` refers to a **top-level DataFrame column**, not to a field of the struct; the docstring example itself uses `pl.col(\"multiply\")` to pull in an outer column. Per the docstring, strings passed positionally are parsed as column names, not as struct fields. If the frame has a column with the same name as a struct field, `pl.col` silently computes on the outer column. Use `pl.field(\"name\")` to reference the struct's own fields."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows field `a` replacing the top-level column `a` and `s` being kept, while the `Expr.name.prefix_fields` version leaves `a` intact.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `label` holding the ids, and the docstring says names are given in the same order as the struct's fields.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows `DuplicateError` without aliases and success with `Expr.alias`.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows `StructFieldNotFoundError` for `\"a.b\"` and success with chained `Expr.struct.field` calls.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "drop",
+   "reason": "The docstring itself calls this behaviour obvious, so it is trivia an agent would not get wrong.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "drop",
+   "reason": "The output contains no exception name, so calling `Expr.struct.json_encode` on the Int64 column did not raise, which contradicts the trap.",
+   "trap": ""
+  }
+ ]
+}

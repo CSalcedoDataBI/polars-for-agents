@@ -1,0 +1,136 @@
+{
+ "chunk": "Expr.str-2",
+ "group": "Expr.str",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Datetime time unit is inferred from the format string",
+   "applies_to": [
+    "Expr.str.to_datetime",
+    "Expr.str.strptime"
+   ],
+   "trap": "When you give a format, `Expr.str.to_datetime` and `Expr.str.strptime` infer the time unit from it. `%.3f` yields `Datetime(\"ms\")`; with no fractional seconds the default is `\"us\"`. Columns parsed with different formats can therefore end up with different `Datetime` dtypes. Pass `time_unit=` to `Expr.str.to_datetime` to pin the unit, for example `time_unit=\"ns\"`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"2024-01-01 00:00:00.123\"]})\nfmt = \"%Y-%m-%d %H:%M:%S%.3f\"\ninferred = df.select(pl.col(\"s\").str.to_datetime(fmt))\npinned = df.select(pl.col(\"s\").str.to_datetime(fmt, time_unit=\"ns\"))\nprint(inferred.schema)\nprint(pinned.schema)",
+   "output": "Schema({'s': Datetime(time_unit='ms', time_zone=None)})\nSchema({'s': Datetime(time_unit='ns', time_zone=None)})"
+  },
+  {
+   "title": "strip_chars_start strips a character set, not a prefix",
+   "applies_to": [
+    "Expr.str.strip_chars_start",
+    "Expr.str.strip_prefix",
+    "Expr.str.strip_suffix"
+   ],
+   "trap": "`Expr.str.strip_chars_start` treats its argument as a **set** of characters and strips any leading combination of them. So `\"fo\"` turns `\"foofoobar\"` into `\"bar\"` and `\"ooze\"` into `\"ze\"`. Once you pass `characters`, leading whitespace is no longer stripped. To remove an exact prefix once, use `Expr.str.strip_prefix`, or `Expr.str.strip_suffix` for the end. If the whole string equals the prefix or suffix, the result is an empty string, not null.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [\"foofoobar\", \"ooze\", \" foo\", \"foo\", \"bar\"]})\nout = df.with_columns(\n    chars=pl.col(\"a\").str.strip_chars_start(\"fo\"),\n    prefix=pl.col(\"a\").str.strip_prefix(\"foo\"),\n    suffix=pl.col(\"a\").str.strip_suffix(\"bar\"),\n)\nprint(out[\"a\"].to_list())\nprint(out[\"chars\"].to_list())\nprint(out[\"prefix\"].to_list())\nprint(out[\"suffix\"].to_list())",
+   "output": "['foofoobar', 'ooze', ' foo', 'foo', 'bar']\n['bar', 'ze', ' foo', '', 'bar']\n['foobar', 'ooze', ' foo', '', 'bar']\n['foofoo', 'ooze', ' foo', 'foo', '']"
+  },
+  {
+   "title": "to_integer raises on bad input unless strict=False",
+   "applies_to": [
+    "Expr.str.to_integer"
+   ],
+   "trap": "`Expr.str.to_integer` defaults to `strict=True`, so one unparsable string makes the whole query raise. Pass `strict=False` to turn failures into null instead. Use `base=` for binary or hex input. Use `dtype=` to choose the integer type; the default is `Int64`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"12\", \"abc\", None]})\ntry:\n    df.select(pl.col(\"s\").str.to_integer())\nexcept Exception as e:\n    print(\"raised:\", type(e))\nout = df.select(pl.col(\"s\").str.to_integer(strict=False))\nprint(out[\"s\"].to_list())\nhexdf = pl.DataFrame({\"h\": [\"ff\", \"10\"]})\nhx = hexdf.select(pl.col(\"h\").str.to_integer(base=16, dtype=pl.Int32))\nprint(hx[\"h\"].to_list())\nprint(hx.schema)",
+   "output": "raised: <class 'polars.exceptions.ComputeError'>\n[12, None, None]\n[255, 16]\nSchema({'h': Int32})"
+  },
+  {
+   "title": "Date parsing is strict and exact by default",
+   "applies_to": [
+    "Expr.str.to_date",
+    "Expr.str.strptime",
+    "Expr.str.to_datetime"
+   ],
+   "trap": "`Expr.str.to_date`, `Expr.str.to_datetime` and `Expr.str.strptime` default to `strict=True`. One invalid value, such as `2024-02-30`, raises instead of becoming null. They also default to `exact=True`, so any text around the date makes parsing fail. Use `strict=False` to get nulls for bad rows. Use `exact=False` to match the format anywhere in the string, at a performance cost.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"2024-01-05\", \"2024-02-30\", \"due 2024-03-01\"]})\ntry:\n    df.select(pl.col(\"s\").str.to_date(\"%Y-%m-%d\"))\nexcept Exception as e:\n    print(\"raised:\", type(e))\nout = df.select(\n    lenient=pl.col(\"s\").str.to_date(\"%Y-%m-%d\", strict=False),\n    anywhere=pl.col(\"s\").str.to_date(\"%Y-%m-%d\", strict=False, exact=False),\n)\nprint(out[\"lenient\"].to_list())\nprint(out[\"anywhere\"].to_list())",
+   "output": "raised: <class 'polars.exceptions.InvalidOperationError'>\n[datetime.date(2024, 1, 5), None, None]\n[datetime.date(2024, 1, 5), None, datetime.date(2024, 3, 1)]"
+  },
+  {
+   "title": "time_zone replaces naive times but converts offset-aware ones",
+   "applies_to": [
+    "Expr.str.to_datetime"
+   ],
+   "trap": "In `Expr.str.to_datetime`, the `time_zone` argument behaves differently depending on the input. For tz-naive strings it **replaces** the zone, so 12:00 stays 12:00 local time. For strings with an offset it **converts**, so 12:00+0000 becomes 17:30 in Asia/Kolkata. Offset-aware input without `time_zone` comes back in UTC. Check whether your strings carry an offset before assuming which behaviour you get.",
+   "example": "import polars as pl\n\nnaive = pl.DataFrame({\"s\": [\"2024-01-01 12:00\"]})\naware = pl.DataFrame({\"s\": [\"2024-01-01 12:00+0000\"]})\nreplaced = naive.select(\n    pl.col(\"s\").str.to_datetime(\"%Y-%m-%d %H:%M\", time_zone=\"Asia/Kolkata\")\n).item()\nconverted = aware.select(\n    pl.col(\"s\").str.to_datetime(\"%Y-%m-%d %H:%M%z\", time_zone=\"Asia/Kolkata\")\n).item()\nprint(replaced)\nprint(converted)\nprint(aware.select(pl.col(\"s\").str.to_datetime(\"%Y-%m-%d %H:%M%z\")).schema)",
+   "output": "2024-01-01 12:00:00+05:30\n2024-01-01 17:30:00+05:30\nSchema({'s': Datetime(time_unit='us', time_zone='UTC')})"
+  },
+  {
+   "title": "to_decimal is unstable and requires scale",
+   "applies_to": [
+    "Expr.str.to_decimal"
+   ],
+   "trap": "`Expr.str.to_decimal` is marked unstable and may change without notice. Since 1.33.0, `inference_length` has been removed and the keyword-only `scale` is mandatory. Older code that calls it with no arguments now fails with a `TypeError`. Always pass `scale=`. Values with fewer decimals are padded, so `143.9` becomes `143.90` at scale 2.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [\"40.12\", \"143.9\"]})\ntry:\n    df.select(pl.col(\"x\").str.to_decimal())\nexcept Exception as e:\n    print(\"raised:\", type(e))\nout = df.select(pl.col(\"x\").str.to_decimal(scale=2))\nprint(out[\"x\"].to_list())\nprint(out.schema)",
+   "output": "raised: <class 'TypeError'>\n[Decimal('40.12'), Decimal('143.90')]\nSchema({'x': Decimal(precision=38, scale=2)})"
+  },
+  {
+   "title": "Use zfill, not pad_start, for signed numbers",
+   "applies_to": [
+    "Expr.str.zfill",
+    "Expr.str.pad_start"
+   ],
+   "trap": "`Expr.str.zfill` inserts zeros **after** a leading `-`, giving `-001`. `Expr.str.pad_start` with `\"0\"` puts the zeros before the sign, giving the wrong `00-1`. Both are string methods, so cast numeric columns to `pl.String` first. `Expr.str.zfill` is intended for numeric strings; for non-ASCII text the docs recommend `Expr.str.pad_start`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [-1, 123, None]})\ns = pl.col(\"a\").cast(pl.String)\nout = df.with_columns(zfill=s.str.zfill(4), pad=s.str.pad_start(4, \"0\"))\nprint(out[\"zfill\"].to_list())\nprint(out[\"pad\"].to_list())",
+   "output": "['-001', '0123', None]\n['00-1', '0123', None]"
+  },
+  {
+   "title": "Negative n in str.tail drops leading characters",
+   "applies_to": [
+    "Expr.str.tail"
+   ],
+   "trap": "`Expr.str.tail(-3)` does not mean the same as Python's `s[-3:]`. It returns everything **except the first 3** characters, like `s[3:]`. Use a positive `n` to get the last n characters. `n` counts characters, not bytes. Strings shorter than `n` come back whole, and nulls stay null.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"dragonfruit\", \"kiwi\", \"h\\u00e9llo\", None]})\nout = df.with_columns(\n    last3=pl.col(\"s\").str.tail(3),\n    neg3=pl.col(\"s\").str.tail(-3),\n    last4=pl.col(\"s\").str.tail(4),\n)\nprint(ascii(out[\"last3\"].to_list()))\nprint(ascii(out[\"neg3\"].to_list()))\nprint(ascii(out[\"last4\"].to_list()))",
+   "output": "['uit', 'iwi', 'llo', None]\n['gonfruit', 'i', 'lo', None]\n['ruit', 'kiwi', '\\xe9llo', None]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The inference and the `time_unit=` pin are supported, but the claim that a full `pl.Datetime(...)` dtype pins the unit in `Expr.str.strptime` is not shown in the output or docstrings.",
+   "trap": "When you give a format, `Expr.str.to_datetime` and `Expr.str.strptime` infer the time unit from it. `%.3f` yields `Datetime(\"ms\")`; with no fractional seconds the default is `\"us\"`. Columns parsed with different formats can therefore end up with different `Datetime` dtypes. Pass `time_unit=` to `Expr.str.to_datetime` to pin the unit, for example `time_unit=\"ns\"`."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "Every claim matches the output and the docstrings: set-based stripping, whitespace kept, exact one-time prefix and suffix removal, and empty string on a full match.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows the `ComputeError` raise, nulls with `strict=False` and hex parsing with `dtype=Int32`, and the docstring confirms the `Int64` default and binary bases.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows the raise under strict defaults, nulls with `strict=False` and the embedded date parsed with `exact=False`, and the docstrings confirm the shared defaults and the performance penalty.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output confirms replace for naive input, convert for offset-aware input and UTC when no `time_zone` is given, matching the docstring rules.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The unstable warning, the 1.33.0 change, the keyword-only mandatory `scale`, the `TypeError` and the padding to `143.90` are all supported.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows `-001` versus `00-1`, and the docstring supports the numeric-string intent and the `pad_start` recommendation for non-ASCII text.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output and docstring notes confirm that negative `n` drops leading characters, that `n` counts characters, that short strings are returned whole and that nulls stay null.",
+   "trap": ""
+  }
+ ]
+}

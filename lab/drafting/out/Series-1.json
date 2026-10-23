@@ -1,0 +1,136 @@
+{
+ "chunk": "Series-1",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Series.append mutates the Series in place",
+   "applies_to": [
+    "Series.append"
+   ],
+   "trap": "Unlike pandas habits where appending returns a new object, `Series.append` modifies the calling Series in place. It returns that same object only for convenience. Code like `c = a.append(b)` therefore also changes `a`, and the result is left with several chunks. Use `pl.concat([a, b])` to get a new Series and leave the original unchanged.",
+   "example": "import polars as pl\n\na = pl.Series(\"a\", [1, 2, 3])\nb = pl.Series(\"a\", [4, 5])\nresult = a.append(b)\nprint(a.to_list())  # a itself was mutated: [1, 2, 3, 4, 5]\nprint(result is a)  # True\nprint(a.n_chunks())  # 2\n\na2 = pl.Series(\"a\", [1, 2, 3])\ncombined = pl.concat([a2, b])\nprint(a2.to_list())  # unchanged: [1, 2, 3]\nprint(combined.to_list())  # [1, 2, 3, 4, 5]\n",
+   "output": "[1, 2, 3, 4, 5]\nTrue\n2\n[1, 2, 3]\n[1, 2, 3, 4, 5]"
+  },
+  {
+   "title": "all/any skip nulls by default, so an all-null column reports True for all",
+   "applies_to": [
+    "Series.all",
+    "Series.any"
+   ],
+   "trap": "By default, `Series.all` and `Series.any` use `ignore_nulls=True` and drop nulls before deciding. A column of only nulls then gives `True` from `Series.all` and `False` from `Series.any`, which can hide missing data. Pass `ignore_nulls=False` to get Kleene logic: the answer becomes `None` when nulls make the result unknown. Both methods only work on Boolean data, so build a mask first, for example `s > 0`.",
+   "example": "import polars as pl\n\ns = pl.Series([None, True], dtype=pl.Boolean)\nprint(s.all())  # True: the null is ignored\nprint(s.all(ignore_nulls=False))  # None: unknown\n\nnulls = pl.Series([None, None], dtype=pl.Boolean)\nprint(nulls.all(), nulls.any())  # True False\nprint(nulls.all(ignore_nulls=False), nulls.any(ignore_nulls=False))  # None None\n\nf = pl.Series([None, False], dtype=pl.Boolean)\nprint(f.any(), f.any(ignore_nulls=False))  # False None\n",
+   "output": "True\nNone\nTrue False\nNone None\nFalse None"
+  },
+  {
+   "title": "arg_sort puts nulls first by default",
+   "applies_to": [
+    "Series.arg_sort"
+   ],
+   "trap": "`Series.arg_sort` defaults to `nulls_last=False`, so the positions of nulls come first in the result. Code that takes `s.arg_sort()[0]` as the position of the smallest value gets the null instead. Pass `nulls_last=True` when you want nulls at the end. Use `Series.arg_min` if you only need the position of the minimum.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [3, None, 1, 2])\nprint(s.arg_sort().to_list())  # [1, 2, 3, 0] -> null position first\nprint(s.arg_sort()[0])  # 1: the null, not the minimum\nidx = s.arg_sort(nulls_last=True)\nprint(idx.to_list())  # [2, 3, 0, 1]\nprint(s.gather(idx).to_list())  # [1, 2, 3, None]\nprint(s.arg_min())  # 2\n",
+   "output": "[1, 2, 3, 0]\n1\n[2, 3, 0, 1]\n[1, 2, 3, None]\n2"
+  },
+  {
+   "title": "arg_max/arg_min return a position or None, not an index label",
+   "applies_to": [
+    "Series.arg_max",
+    "Series.arg_min"
+   ],
+   "trap": "Polars has no index, so `Series.arg_max` and `Series.arg_min` return a 0-based integer position. This is not a pandas-style `idxmax` label. Nulls are skipped, and the return type is `int | None`. A Series with no non-null values gives `None`, so check for `None` before passing the result on to indexing or `Series.gather`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, None, 3, 2])\nprint(s.arg_max(), s.arg_min())  # 2 0 -> positions, nulls skipped\n\nempty = pl.Series(\"a\", [None, None], dtype=pl.Int64)\npos = empty.arg_max()\nprint(pos)  # None\nif pos is not None:\n    print(empty[pos])\nelse:\n    print(\"no non-null values\")\n",
+   "output": "2 0\nNone\nno non-null values"
+  },
+  {
+   "title": "bottom_k output is unordered and only includes nulls when it has to",
+   "applies_to": [
+    "Series.bottom_k",
+    "Series.bottom_k_by"
+   ],
+   "trap": "`Series.bottom_k` and `Series.bottom_k_by` do not promise any order in their output. Call `sort` afterwards if order matters, and do not treat the first element as the minimum. Non-null elements are always chosen ahead of nulls, regardless of `reverse`. Nulls only appear when `k` is larger than the number of non-null values.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [2, None, 5, 1, None])\nprint(s.bottom_k(3).sort().to_list())  # [1, 2, 5]: nulls are not 'smallest'\nprint(s.bottom_k(4).sort(nulls_last=True).to_list())  # [1, 2, 5, None]\n",
+   "output": "[1, 2, 5]\n[1, 2, 5, None]"
+  },
+  {
+   "title": "Out-of-domain trig results are NaN or inf, not null",
+   "applies_to": [
+    "Series.arccosh",
+    "Series.arctanh",
+    "Series.arccos",
+    "Series.arcsin"
+   ],
+   "trap": "Out-of-domain inputs return NaN, not null. `Series.arccosh` gives NaN below 1, and `Series.arctanh` gives NaN when the absolute value is above 1, `inf` at 1 and `-inf` at -1. `Series.null_count` reports 0 for these NaNs and `Series.drop_nulls` keeps them, so check with `is_nan()` or `is_finite()` instead. Use `fill_nan(None)` to turn NaN into nulls, or `drop_nans()` to remove them.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [5.0, 1.0, 0.0, -1.0]).arccosh()\nprint(s.null_count())  # 0\nprint(s.drop_nulls().len())  # 4: NaNs survive\nprint(s.is_nan().sum())  # 2\nprint(s.fill_nan(None).null_count())  # 2\nprint(s.drop_nans().to_list())\n\nt = pl.Series(\"b\", [1.0, 0.5]).arctanh()\nprint(t.to_list(), t.is_finite().to_list())  # [inf, ...] [False, True]\n",
+   "output": "0\n4\n2\n2\n[2.2924316695611777, 0.0]\n[inf, 0.5493061443340549] [False, True]"
+  },
+  {
+   "title": "ceil returns floats, not integers",
+   "applies_to": [
+    "Series.ceil"
+   ],
+   "trap": "`Series.ceil` rounds up but keeps the floating-point dtype. The result is `2.0`, not `2`, and it is documented to work only on floating-point Series. If later code needs integers, for example for `Series.gather` or for a join key, cast explicitly with `.cast(pl.Int64)`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1.2, 2.5, -1.5])\nc = s.ceil()\nprint(c.dtype)  # Float64\nprint(c.to_list())  # [2.0, 3.0, -1.0]\nci = c.cast(pl.Int64)\nprint(ci.dtype, ci.to_list())  # Int64 [2, 3, -1]\n",
+   "output": "Float64\n[2.0, 3.0, -1.0]\nInt64 [2, 3, -1]"
+  },
+  {
+   "title": "cast is strict by default; strict=False silently turns failures into nulls",
+   "applies_to": [
+    "Series.cast"
+   ],
+   "trap": "`Series.cast` defaults to `strict=True`, so a single unparsable string or out-of-range number makes the whole cast raise. Setting `strict=False` does not fix the data: it turns every invalid value into null without any warning, so check `Series.null_count` afterwards. For numeric overflow, `wrap_numerical=True` wraps the value around instead of failing or producing null. Choose that option deliberately, because it returns a different number rather than flagging the problem.",
+   "example": "import polars as pl\n\ns = pl.Series([\"1\", \"2\", \"x\"])\ntry:\n    s.cast(pl.Int64)\nexcept Exception:\n    print(\"strict string cast raised\")\nlenient = s.cast(pl.Int64, strict=False)\nprint(lenient.to_list(), lenient.null_count())  # [1, 2, None] 1\n\nbig = pl.Series([1, 300])\ntry:\n    big.cast(pl.UInt8)\nexcept Exception:\n    print(\"strict overflow cast raised\")\nprint(big.cast(pl.UInt8, strict=False).to_list())  # [1, None]\nprint(big.cast(pl.UInt8, wrap_numerical=True).to_list())  # [1, 44]\n",
+   "output": "strict string cast raised\n[1, 2, None] 1\nstrict overflow cast raised\n[1, None]\n[1, 44]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The in-place mutation, the `result is a` identity, the 2 chunks and the unchanged `pl.concat` original all match the output and the docstring warning.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The default ignore-nulls results, the Kleene `None` results and the Boolean-only restriction all match the output and docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows the null position first by default, the effect of `nulls_last=True`, and `arg_min` returning 2.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows positions with nulls skipped and `None` for an all-null Series, consistent with the `int | None` signature.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The docstrings state unordered output and the null preference regardless of `reverse`, and the output shows nulls only when k exceeds the non-null count.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "fix",
+   "reason": "The output never tests `fill_null`, and the NaN-out-of-domain behaviour is only shown for `arccosh` and `arctanh`, not for `arccos` or `arcsin`.",
+   "trap": "Out-of-domain inputs return NaN, not null. `Series.arccosh` gives NaN below 1, and `Series.arctanh` gives NaN when the absolute value is above 1, `inf` at 1 and `-inf` at -1. `Series.null_count` reports 0 for these NaNs and `Series.drop_nulls` keeps them, so check with `is_nan()` or `is_finite()` instead. Use `fill_nan(None)` to turn NaN into nulls, or `drop_nans()` to remove them."
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows a Float64 result and an explicit cast to Int64, and the docstring states the method only works on floating-point Series.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The strict raise, the silent nulls with `strict=False` and the wrap to 44 are all shown in the output and agree with the docstring.",
+   "trap": ""
+  }
+ ]
+}

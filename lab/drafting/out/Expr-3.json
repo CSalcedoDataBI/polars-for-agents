@@ -1,0 +1,145 @@
+{
+ "chunk": "Expr-3",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Null and NaN are different missing values",
+   "applies_to": [
+    "Expr.fill_null",
+    "Expr.is_null",
+    "Expr.is_not_null",
+    "Expr.is_nan",
+    "Expr.is_not_nan",
+    "Expr.interpolate"
+   ],
+   "trap": "pandas treats `NaN` as missing data. Polars does not: `null` is missing, while `NaN` is an ordinary float value. `Expr.is_null` returns false for `NaN`, and `Expr.fill_null` leaves `NaN` untouched. `Expr.interpolate` also leaves `NaN` in place, as its docstring example shows. To clean float columns, first convert `NaN` to null with `Expr.fill_nan(None)` and then call `Expr.fill_null`, or test for `NaN` with `Expr.is_nan`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"b\": [1.0, float(\"nan\"), None]})\nout = df.select(\n    pl.col(\"b\").is_null().alias(\"is_null\"),\n    pl.col(\"b\").is_nan().alias(\"is_nan\"),\n    pl.col(\"b\").fill_null(0.0).alias(\"fill_null_only\"),\n    pl.col(\"b\").fill_nan(None).fill_null(0.0).alias(\"nan_and_null_filled\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'is_null': [False, False, True], 'is_nan': [False, True, None], 'fill_null_only': [1.0, nan, 0.0], 'nan_and_null_filled': [1.0, 0.0, 0.0]}"
+  },
+  {
+   "title": "NaN compares equal to NaN in Polars comparisons",
+   "applies_to": [
+    "Expr.ge",
+    "Expr.gt"
+   ],
+   "trap": "Under IEEE/NumPy/pandas rules, every comparison with `NaN` is false. Polars treats NaNs as equal, so `Expr.ge` evaluates `NaN >= NaN` to true. `Expr.gt` gives false for that pair. A filter such as `x >= y` can therefore silently keep NaN rows. If NaN rows must not pass, exclude them explicitly with `Expr.is_not_nan`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [float(\"nan\"), 1.0], \"y\": [float(\"nan\"), 2.0]})\nout = df.with_columns(\n    pl.col(\"x\").ge(pl.col(\"y\")).alias(\"x_ge_y\"),\n    pl.col(\"x\").gt(pl.col(\"y\")).alias(\"x_gt_y\"),\n    (pl.col(\"x\").ge(pl.col(\"y\")) & pl.col(\"x\").is_not_nan()).alias(\"x_ge_y_no_nan\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'x': [nan, 1.0], 'y': [nan, 2.0], 'x_ge_y': [True, False], 'x_gt_y': [False, False], 'x_ge_y_no_nan': [False, False]}"
+  },
+  {
+   "title": "is_between parses string bounds as column names and is inclusive on both ends",
+   "applies_to": [
+    "Expr.is_between"
+   ],
+   "trap": "`Expr.is_between` treats string bounds as **column names**, not literals. So `pl.col(\"s\").is_between(\"b\", \"d\")` looks for columns `b` and `d` and fails. Wrap string bounds in `pl.lit` instead. The default `closed=\"both\"` includes both endpoints, so pass `closed=\"left\"`, `\"right\"` or `\"none\"` when you need half-open ranges such as date buckets.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"num\": [1, 2, 4, 5], \"s\": [\"a\", \"b\", \"d\", \"e\"]})\nout = df.select(\n    pl.col(\"num\").is_between(2, 4).alias(\"both\"),\n    pl.col(\"num\").is_between(2, 4, closed=\"left\").alias(\"left\"),\n)\nprint(out.to_dict(as_series=False))\ntry:\n    df.select(pl.col(\"s\").is_between(\"b\", \"d\"))\nexcept Exception as e:\n    print(type(e))\nok = df.select(pl.col(\"s\").is_between(pl.lit(\"b\"), pl.lit(\"d\")))\nprint(ok.to_dict(as_series=False))\n",
+   "output": "{'both': [False, True, True, False], 'left': [False, True, False, False]}\n<class 'polars.exceptions.ColumnNotFoundError'>\n{'s': [False, True, True, False]}"
+  },
+  {
+   "title": "Expr.flatten is deprecated since 1.38",
+   "applies_to": [
+    "Expr.flatten"
+   ],
+   "trap": "`Expr.flatten` is deprecated in 1.38 and will be removed in 2.0, so do not write new code with it. The deprecation message names `Expr.list.explode(keep_nulls=False, empty_as_null=False)` as the replacement and describes it as the behaviour you likely expect. Use that form, including in `group_by().agg`, where `flatten` was commonly used to merge lists per group.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"group\": [\"a\", \"b\", \"b\"], \"values\": [[1, 2], [2, 3], [4]]})\nout = df.group_by(\"group\", maintain_order=True).agg(\n    pl.col(\"values\").list.explode(keep_nulls=False, empty_as_null=False)\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'group': ['a', 'b'], 'values': [[1, 2], [2, 3, 4]]}"
+  },
+  {
+   "title": "is_in propagates nulls unless nulls_equal=True",
+   "applies_to": [
+    "Expr.is_in"
+   ],
+   "trap": "With the default `nulls_equal=False`, a null input to `Expr.is_in` does not produce False, and putting `None` in the lookup list does not make it match. The null propagates instead, so a filter on that mask silently drops the null rows. Pass `nulls_equal=True` to treat null as a matchable value.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 3]})\nout = df.with_columns(\n    pl.col(\"a\").is_in([1, None]).alias(\"default\"),\n    pl.col(\"a\").is_in([1, None], nulls_equal=True).alias(\"nulls_equal\"),\n)\nprint(out.to_dict(as_series=False))\nprint(df.filter(pl.col(\"a\").is_in([1, None])).height)\nprint(df.filter(pl.col(\"a\").is_in([1, None], nulls_equal=True)).height)\n",
+   "output": "{'a': [1, None, 3], 'default': [True, None, False], 'nulls_equal': [True, True, False]}\n1\n2"
+  },
+  {
+   "title": "first() returns null if the first value is null",
+   "applies_to": [
+    "Expr.first"
+   ],
+   "trap": "pandas `groupby().first()` skips missing values. Polars `Expr.first` defaults to `ignore_nulls=False` and returns the literal first element, even when that element is null. To get the first non-null value per group, pass `ignore_nulls=True`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [None, 1, 2]})\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").first().alias(\"first\"),\n    pl.col(\"v\").first(ignore_nulls=True).alias(\"first_non_null\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'g': ['a', 'b'], 'first': [None, 2], 'first_non_null': [1, 2]}"
+  },
+  {
+   "title": "is_duplicated marks every occurrence, unlike pandas duplicated",
+   "applies_to": [
+    "Expr.is_duplicated",
+    "Expr.is_unique",
+    "Expr.is_first_distinct",
+    "Expr.is_last_distinct"
+   ],
+   "trap": "`Expr.is_duplicated` is true for **all** occurrences of a repeated value, including the first one. pandas `duplicated()` with keep='first' flags only the later copies. Filtering out `is_duplicated()` rows therefore drops every copy, not just the extras. `Expr.is_unique` is its exact complement. For pandas-style dedup masks, use `Expr.is_first_distinct().not_()` to keep the first copy or `Expr.is_last_distinct().not_()` to keep the last.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 1, 2, 1]})\nout = df.with_columns(\n    pl.col(\"a\").is_duplicated().alias(\"is_duplicated\"),\n    pl.col(\"a\").is_unique().alias(\"is_unique\"),\n    pl.col(\"a\").is_first_distinct().not_().alias(\"dup_keep_first\"),\n    pl.col(\"a\").is_last_distinct().not_().alias(\"dup_keep_last\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'a': [1, 1, 2, 1], 'is_duplicated': [True, True, False, True], 'is_unique': [False, False, True, False], 'dup_keep_first': [False, True, False, True], 'dup_keep_last': [True, True, False, False]}"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "get raises on out-of-bounds indices unless null_on_oob=True",
+    "applies_to": [
+     "Expr.get"
+    ],
+    "trap": "`Expr.get` defaults to `null_on_oob=False`, so an index past the end raises an error instead of returning null. This bites in `group_by().agg` when some groups are shorter than others: a single short group fails the whole query. Pass `null_on_oob=True` to get null for those groups.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [1, 2, 3]})\ntry:\n    df.group_by(\"g\", maintain_order=True).agg(pl.col(\"v\").get(1))\nexcept Exception as e:\n    print(type(e))\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").get(1, null_on_oob=True)\n)\nprint(out.to_dict(as_series=False))\n",
+    "output": "{'g': ['a', 'b'], 'v': [2, None]}"
+   },
+   "problems": [
+    "verify: dropped - The output prints no exception type, so `get(1)` on the one-row group did not raise inside `group_by().agg`, which contradicts the claim that a short group fails the whole query."
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output confirms that `is_null` is false for NaN, that `fill_null` leaves NaN in place and that `fill_nan(None).fill_null` cleans both, and the `interpolate` docstring shows NaN kept.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output and both docstrings show `NaN >= NaN` is true and `NaN > NaN` is false, and the `is_not_nan` guard removes the NaN row.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The `ColumnNotFoundError` for string bounds, the working `pl.lit` version and the inclusive default versus `closed=\"left\"` all match the output and the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The deprecation version, the 2.0 removal, the named replacement and the 'behavior you likely expect' wording all come from the docstring, and the example confirms per-group list merging.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows a null result for the null row by default, True with `nulls_equal=True`, and filter heights of 1 versus 2.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output and the docstring show that `first()` returns null and `first(ignore_nulls=True)` returns 1 for group a.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output confirms that `is_duplicated` marks all copies, that `is_unique` is its complement, and that the negated first/last-distinct masks reproduce pandas keep='first' and keep='last'.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "drop",
+   "reason": "The output prints no exception type, so `get(1)` on the one-row group did not raise inside `group_by().agg`, which contradicts the claim that a short group fails the whole query.",
+   "trap": ""
+  }
+ ]
+}

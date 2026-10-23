@@ -1,0 +1,119 @@
+{
+ "chunk": "DataFrame-4",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expressions in one with_columns call cannot see each other, and nothing happens in place",
+   "applies_to": [
+    "DataFrame.with_columns",
+    "DataFrame.with_columns_seq"
+   ],
+   "trap": "All expressions passed to a single `DataFrame.with_columns` call are evaluated against the *input* frame, so a sibling expression that references a column created in the same call raises `ColumnNotFoundError`. `DataFrame.with_columns_seq` differs only in running the expressions sequentially instead of in parallel; use it when the work per expression is cheap, not as a way to reference sibling columns. Both methods return a new DataFrame, so calling them without reassigning silently does nothing. Chain a second `DataFrame.with_columns` call for dependent columns and always reassign the result.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3]})\ntry:\n    df.with_columns(b=pl.col(\"a\") * 2, c=pl.col(\"b\") + 1)\nexcept Exception as e:\n    print(type(e))\n\ndf.with_columns(b=pl.col(\"a\") * 10)  # result discarded\nprint(df.columns)\n\nout = df.with_columns(b=pl.col(\"a\") * 2).with_columns(c=pl.col(\"b\") + 1)\nprint(out.columns)\nprint(out.rows())\n",
+   "output": "<class 'polars.exceptions.ColumnNotFoundError'>\n['a']\n['a', 'b', 'c']\n[(1, 2, 3), (2, 4, 5), (3, 6, 7)]"
+  },
+  {
+   "title": "update joins on row position by default and ignores nulls from the other frame",
+   "applies_to": [
+    "DataFrame.update"
+   ],
+   "trap": "`DataFrame.update` is unstable. With `on=None`, the default, it uses the implicit row index of each frame as the join key, not any key column. This can overwrite your key column with values from unrelated rows, so always pass `on=` (or `left_on`/`right_on`). With the default `include_nulls=False`, nulls in `other` are skipped rather than written. Pass `include_nulls=True` if a null is meant to clear the value.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"A\": [1, 2, 3, 4], \"B\": [400, 500, 600, 700]})\nnew = pl.DataFrame({\"A\": [3, 2], \"B\": [0, None]})\n\nprint(df.update(new).rows())  # positional: A in row 0 becomes 3\nprint(df.update(new, on=\"A\")[\"B\"].to_list())\nprint(df.update(new, on=\"A\", include_nulls=True)[\"B\"].to_list())\n",
+   "output": "[(3, 0), (2, 500), (3, 600), (4, 700)]\n[400, 500, 0, 700]\n[400, None, 0, 700]"
+  },
+  {
+   "title": "unique keeps an arbitrary duplicate and drops row order by default",
+   "applies_to": [
+    "DataFrame.unique"
+   ],
+   "trap": "`DataFrame.unique` defaults to `keep='any'` and `maintain_order=False`. Which duplicate survives is not guaranteed, and neither is the output row order. Pass `keep='first'` or `keep='last'` together with `maintain_order=True` when the surviving row or the row order matters. `keep='none'` removes every row that has a duplicate. The method fails if a `List` column is part of the rows or the `subset`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"k\": [\"b\", \"a\", \"b\", \"a\"], \"v\": [1, 2, 3, 4]})\n\nprint(df.unique(subset=\"k\").height)  # which v survives is not guaranteed\nprint(df.unique(subset=\"k\", keep=\"first\", maintain_order=True).rows())\nprint(df.unique(subset=\"k\", keep=\"last\", maintain_order=True).rows())\nprint(df.unique(subset=\"k\", keep=\"none\").height)\n",
+   "output": "2\n[('b', 1), ('a', 2)]\n[('b', 3), ('a', 4)]\n0"
+  },
+  {
+   "title": "top_k output is unordered and uses reverse, not descending",
+   "applies_to": [
+    "DataFrame.top_k",
+    "DataFrame.bottom_k"
+   ],
+   "trap": "`DataFrame.top_k` returns the k largest rows in no particular order, so taking the first row as the maximum is a bug. Call `DataFrame.sort` on the result if order matters. The parameter for picking the smallest values is `reverse`; `descending` was renamed in 1.0.0. Non-null values are always preferred over nulls, whatever `reverse` is set to, so nulls are not selected while enough non-null values exist.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"name\": [\"a\", \"b\", \"c\", \"d\", \"e\"], \"score\": [3, None, 1, 5, 4]})\n\ntop = df.top_k(3, by=\"score\")\nprint(sorted(top[\"score\"].to_list()))\nprint(top.sort(\"score\", descending=True).rows())\n\nlow = df.top_k(2, by=\"score\", reverse=True).sort(\"score\")\nprint(low[\"score\"].to_list())  # nulls not picked as smallest\nprint(df.bottom_k(2, by=\"score\").sort(\"score\")[\"score\"].to_list())\n",
+   "output": "[3, 4, 5]\n[('d', 5), ('e', 4), ('a', 3)]\n[1, 3]\n[1, 3]"
+  },
+  {
+   "title": "unpivot uses on/index instead of value_vars/id_vars, and the first positional argument is on",
+   "applies_to": [
+    "DataFrame.unpivot",
+    "DataFrame.melt"
+   ],
+   "trap": "Coming from pandas `melt`, use `index` in place of `id_vars` and `on` in place of `value_vars`. The first positional argument of `DataFrame.unpivot` is `on`, so `df.unpivot(\"id\")` unpivots the id column itself and drops everything else instead of keeping it as the identifier. Pass `on=` and `index=` by keyword. The resulting row order is unspecified, so sort the output if you depend on it.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [\"x\", \"y\"], \"b\": [1, 3], \"c\": [2, 4]})\n\nwrong = df.unpivot(\"id\")  # 'id' is treated as `on`\nprint(wrong.columns, wrong[\"variable\"].unique().to_list())\n\nright = df.unpivot(on=[\"b\", \"c\"], index=\"id\").sort(\"id\", \"variable\")\nprint(right.columns)\nprint(right.rows())\n",
+   "output": "['variable', 'value'] ['id']\n['id', 'variable', 'value']\n[('x', 'b', 1), ('x', 'c', 2), ('y', 'b', 3), ('y', 'c', 4)]"
+  },
+  {
+   "title": "with_row_count is deprecated and its replacement uses a different default column name",
+   "applies_to": [
+    "DataFrame.with_row_count",
+    "DataFrame.with_row_index"
+   ],
+   "trap": "`DataFrame.with_row_count` is deprecated; use `DataFrame.with_row_index`. The default column name changed from `row_nr` to `index`. Code that later selects `pl.col(\"row_nr\")` breaks unless you pass the name explicitly. The result is an ordinary `UInt32` column, not a pandas-style index, and `offset` cannot be negative.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [10, 20, 30]})\n\nprint(df.with_row_index().columns)  # default name is 'index'\n\nlegacy = df.with_row_index(\"row_nr\", offset=1)\nprint(legacy.columns)\nprint(legacy.rows())\nprint(legacy.schema[\"row_nr\"])\n",
+   "output": "['index', 'a']\n['row_nr', 'a']\n[(1, 10), (2, 20), (3, 30)]\nUInt32"
+  },
+  {
+   "title": "upsample needs a sorted time column and leaves inserted rows null",
+   "applies_to": [
+    "DataFrame.upsample"
+   ],
+   "trap": "`DataFrame.upsample` only produces meaningful output if `time_column` is sorted, so sort it first. Inserted rows get nulls in every other column, including grouping columns, unless those columns are passed via `group_by` (formerly `by`). Fill the value columns afterwards, for example with `Expr.forward_fill`. With `group_by`, the result is sorted only within each group; pass `maintain_order=True` for a predictable order.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\n    \"time\": [datetime(2021, 1, 1), datetime(2021, 3, 1), datetime(2021, 4, 1)],\n    \"grp\": [\"A\", \"A\", \"A\"],\n    \"v\": [1, 2, 3],\n}).sort(\"time\")\n\nup = df.upsample(time_column=\"time\", every=\"1mo\")\nprint(up[\"grp\"].to_list(), up[\"v\"].to_list())  # null in Feb\n\nfilled = df.upsample(\n    time_column=\"time\", every=\"1mo\", group_by=\"grp\", maintain_order=True\n).with_columns(pl.col(\"v\").forward_fill())\nprint(filled[\"grp\"].to_list(), filled[\"v\"].to_list())\n",
+   "output": "['A', None, 'A', 'A'] [1, None, 2, 3]\n['A', 'A', 'A', 'A'] [1, 1, 2, 3]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The sibling-reference error and the discarded result are shown, but neither the output nor the docstrings support the claims about `DataFrame.with_columns_seq` sharing the restriction or about old values being returned.",
+   "trap": "All expressions passed to a single `DataFrame.with_columns` call are evaluated against the *input* frame, so a sibling expression that references a column created in the same call raises `ColumnNotFoundError`. `DataFrame.with_columns_seq` differs only in running the expressions sequentially instead of in parallel; use it when the work per expression is cheap, not as a way to reference sibling columns. Both methods return a new DataFrame, so calling them without reassigning silently does nothing. Chain a second `DataFrame.with_columns` call for dependent columns and always reassign the result."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows the positional overwrite of `A` and the ignored null, and the docstring confirms the unstable status and the `include_nulls` behaviour.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The defaults, the not-guaranteed kept row, the `keep='none'` result of 0 and the `List` failure are all backed by the docstring and the output.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The unordered output, the rename to `reverse` in 1.0.0 and the null preference are all stated in the docstring and match the output.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows `id` being unpivoted with no index column kept, and the docstring confirms the pandas mapping and the unspecified row order.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The deprecation, the default-name change, the `UInt32` dtype and the non-negative offset are all supported by the docstrings and the output.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The sorting requirement, the `by` rename, the within-group sorting and `maintain_order` are in the docstring, and the output shows the null `grp` without `group_by` and the forward fill with it.",
+   "trap": ""
+  }
+ ]
+}

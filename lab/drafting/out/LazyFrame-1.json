@@ -1,0 +1,143 @@
+{
+ "chunk": "LazyFrame-1",
+ "group": "LazyFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Filter drops rows whose predicate evaluates to null",
+   "applies_to": [
+    "LazyFrame.filter",
+    "Expr.ne_missing",
+    "Expr.is_null"
+   ],
+   "trap": "`LazyFrame.filter` keeps only rows where the predicate evaluates to True. Rows where it evaluates to `null` are discarded too. In Polars any comparison involving a null gives `null`, not boolean True or False, so `pl.col(\"a\") != 1` silently drops the null rows as well. Use `Expr.ne_missing`, or add an explicit `| pl.col(\"a\").is_null()`, when nulls must survive the filter.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, None], \"b\": [\"x\", \"y\", \"z\"]})\n\n# Wrong: the null row is dropped because null != 1 evaluates to null\nwrong = lf.filter(pl.col(\"a\") != 1).collect()\nprint(wrong[\"b\"].to_list())\n\n# Right: null-aware comparison keeps the null row\nright = lf.filter(pl.col(\"a\").ne_missing(1)).collect()\nprint(right[\"b\"].to_list())\n\n# Equivalent explicit form\nalso_right = lf.filter((pl.col(\"a\") != 1) | pl.col(\"a\").is_null()).collect()\nprint(also_right[\"b\"].to_list())\n",
+   "output": "['y']\n['y', 'z']\n['y', 'z']"
+  },
+  {
+   "title": "NaN and null are different: drop_nulls/fill_null ignore NaN",
+   "applies_to": [
+    "LazyFrame.drop_nulls",
+    "LazyFrame.drop_nans",
+    "LazyFrame.fill_null",
+    "LazyFrame.fill_nan"
+   ],
+   "trap": "In pandas, NaN is the missing-value marker. In Polars, a floating-point NaN is a real value and is distinct from `null`. `LazyFrame.drop_nulls` and `LazyFrame.fill_null` leave NaN untouched. `LazyFrame.drop_nans` and `LazyFrame.fill_nan` only act on NaN. To treat both as missing, chain the two calls, or convert NaN to null first with `fill_nan(None)`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"x\": [1.0, float(\"nan\"), None]})\n\n# drop_nulls keeps the NaN row\nprint(lf.drop_nulls().collect()[\"x\"].to_list())\n# Chain both to drop every kind of missing value\nprint(lf.drop_nulls().drop_nans().collect()[\"x\"].to_list())\n\n# fill_null does not touch NaN\nprint(lf.fill_null(0.0).collect()[\"x\"].to_list())\n# Convert NaN to null first, then fill everything\nprint(lf.fill_nan(None).fill_null(0.0).collect()[\"x\"].to_list())\n",
+   "output": "[1.0, nan]\n[1.0]\n[1.0, nan, 0.0]\n[1.0, 0.0, 0.0]"
+  },
+  {
+   "title": "LazyFrame.count counts non-null values per column, not rows",
+   "applies_to": [
+    "LazyFrame.count",
+    "pl.len"
+   ],
+   "trap": "`LazyFrame.count` returns a one-row frame holding the number of non-null elements in each column. It is not the number of rows: a column containing nulls reports fewer than the frame height. To get the row count, use `lf.select(pl.len())`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, None, 3], \"b\": [None, None, 6]})\n\n# Per-column non-null counts, NOT the row count\nprint(lf.count().collect().row(0))\n\n# Actual number of rows\nprint(lf.select(pl.len()).collect().item())\n",
+   "output": "(2, 1)\n3"
+  },
+  {
+   "title": "LazyFrame.describe collects eagerly and returns a DataFrame",
+   "applies_to": [
+    "LazyFrame.describe",
+    "LazyFrame.select"
+   ],
+   "trap": "Unlike most LazyFrame methods, `LazyFrame.describe` does not stay lazy. It runs the whole query and returns a `DataFrame`, which can be expensive on a large scan. Do not chain further lazy operations after it. Its output is also documented as not stable across versions, so do not parse it programmatically. For statistics you rely on in code, build explicit aggregations with `LazyFrame.select`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3], \"b\": [4.0, None, 6.0]})\n\nsummary = lf.describe()  # executes the query immediately\nprint(isinstance(summary, pl.DataFrame))\n\n# Stable, lazy, programmatic statistics instead\nstats = lf.select(\n    pl.col(\"a\").mean().alias(\"a_mean\"),\n    pl.col(\"b\").null_count().alias(\"b_nulls\"),\n).collect()\nprint(stats.row(0))\n",
+   "output": "True\n(2.0, 1)"
+  },
+  {
+   "title": "group_by does not preserve group order unless maintain_order=True",
+   "applies_to": [
+    "LazyFrame.group_by"
+   ],
+   "trap": "With the default `maintain_order=False`, `LazyFrame.group_by` does not guarantee that groups come out in any particular order, so tests and `head()` calls that assume an order can break. Pass `maintain_order=True` to keep the order consistent with the input (first appearance), or call `sort` on the result explicitly. Per the docstring, `maintain_order=True` is slower and blocks the possibility of running on the streaming engine.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"k\": [\"b\", \"a\", \"b\", \"c\"], \"v\": [1, 2, 3, 4]})\n\n# Order of first appearance in the input\nordered = lf.group_by(\"k\", maintain_order=True).agg(pl.col(\"v\").sum()).collect()\nprint(ordered[\"k\"].to_list())\n\n# Or sort explicitly after an unordered group_by\nsorted_out = lf.group_by(\"k\").agg(pl.col(\"v\").sum()).sort(\"k\").collect()\nprint(sorted_out[\"k\"].to_list(), sorted_out[\"v\"].to_list())\n",
+   "output": "['b', 'a', 'c']\n['a', 'b', 'c'] [2, 4, 4]"
+  },
+  {
+   "title": "join never matches null keys by default and does not guarantee row order",
+   "applies_to": [
+    "LazyFrame.join"
+   ],
+   "trap": "`LazyFrame.join` uses `nulls_equal=False` by default, so null keys never match each other. Rows keyed on null disappear from an inner join; pandas `merge` does match NaN keys. Set `nulls_equal=True` if nulls should match; this parameter was called `join_nulls` before 1.24. The default `maintain_order=None` does not promise any output order, so `sort` the result if order matters.",
+   "example": "import polars as pl\n\nleft = pl.LazyFrame({\"k\": [1, None], \"l\": [\"x\", \"y\"]})\nright = pl.LazyFrame({\"k\": [1, None], \"r\": [\"p\", \"q\"]})\n\n# Default: the null keys do not match\ndefault = left.join(right, on=\"k\").sort(\"l\").collect()\nprint(default.height, default[\"r\"].to_list())\n\n# Opt in to matching nulls\nmatched = left.join(right, on=\"k\", nulls_equal=True).sort(\"l\").collect()\nprint(matched.height, matched[\"r\"].to_list())\n",
+   "output": "1 ['p']\n2 ['p', 'q']"
+  },
+  {
+   "title": "bottom_k output is unordered and the direction flag is reverse, not descending",
+   "applies_to": [
+    "LazyFrame.bottom_k",
+    "LazyFrame.top_k",
+    "LazyFrame.sort"
+   ],
+   "trap": "`LazyFrame.bottom_k` and `LazyFrame.top_k` return the selected rows in no guaranteed order. Call `LazyFrame.sort` afterwards if you need them ranked. To flip the direction, pass `reverse=True`. These methods have no `descending` keyword. Non-null values are always preferred over nulls, whatever the value of `reverse`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"name\": [\"a\", \"b\", \"c\", \"d\"], \"score\": [5, None, 3, 2]})\n\n# Sort explicitly to get a ranked result\nlow = lf.bottom_k(2, by=\"score\").sort(\"score\").collect()\nprint(low[\"name\"].to_list())\n\n# reverse=True picks the largest; the null score is never chosen\nhigh = lf.bottom_k(2, by=\"score\", reverse=True).sort(\"score\", descending=True).collect()\nprint(high[\"name\"].to_list())\n",
+   "output": "['d', 'c']\n['a', 'c']"
+  },
+  {
+   "title": "fetch and approx_n_unique on LazyFrame are deprecated",
+   "applies_to": [
+    "LazyFrame.fetch",
+    "LazyFrame.approx_n_unique",
+    "LazyFrame.head",
+    "LazyFrame.collect",
+    "Expr.approx_n_unique"
+   ],
+   "trap": "`LazyFrame.fetch` is deprecated. Use `LazyFrame.head` followed by `LazyFrame.collect` instead, but note the two are not equivalent. `fetch` limited the rows read by every scan, so filters and joins could return fewer rows or none. `head` limits the final result. `LazyFrame.approx_n_unique` is also deprecated; use `lf.select(pl.all().approx_n_unique())` with `Expr.approx_n_unique`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 2, 3], \"b\": [1, 1, 1, 1]})\n\n# Replacement for lf.fetch(2): limit the final output, then collect\nprint(lf.head(2).collect().rows())\n\n# Replacement for lf.approx_n_unique()\nprint(lf.select(pl.all().approx_n_unique()).collect().row(0))\n",
+   "output": "[(1, 1), (2, 1)]\n(3, 1)"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The filter behaviour is real and shown by the output, but the 'not False as in pandas' contrast is wrong: in pandas `NaN != 1` is True, and the docstring only says the result is null rather than True or False.",
+   "trap": "`LazyFrame.filter` keeps only rows where the predicate evaluates to True. Rows where it evaluates to `null` are discarded too. In Polars any comparison involving a null gives `null`, not boolean True or False, so `pl.col(\"a\") != 1` silently drops the null rows as well. Use `Expr.ne_missing`, or add an explicit `| pl.col(\"a\").is_null()`, when nulls must survive the filter."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows `drop_nulls` and `fill_null` leaving NaN untouched, and `fill_nan(None)` converting NaN to null, all consistent with the docstring notes.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The docstring and the output (2, 1) versus 3 confirm that `count` returns per-column non-null counts while `pl.len` returns the row count.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The docstring warnings state that `describe` collects eagerly, returns a DataFrame, and has output that is not guaranteed stable, and the output confirms the DataFrame return type.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "fix",
+   "reason": "The order trap and the cost of `maintain_order` are supported by the docstring, but the claim that SQL habits assume a stable group order is a misstatement, since SQL GROUP BY guarantees no order.",
+   "trap": "With the default `maintain_order=False`, `LazyFrame.group_by` does not guarantee that groups come out in any particular order, so tests and `head()` calls that assume an order can break. Pass `maintain_order=True` to keep the order consistent with the input (first appearance), or call `sort` on the result explicitly. Per the docstring, `maintain_order=True` is slower and blocks the possibility of running on the streaming engine."
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The signature and versionchanged note confirm `nulls_equal=False`, the rename from `join_nulls` in 1.24, and the `maintain_order=None` default, and the output shows null keys matching only with `nulls_equal=True`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The docstring states the output is unordered, that `descending` was renamed `reverse`, and that non-nulls are always preferred, and the output matches.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The deprecation messages and the fetch Notes support every claim, including that `fetch` limits each scan and that joins may return no data.",
+   "trap": ""
+  }
+ ]
+}

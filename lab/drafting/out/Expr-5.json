@@ -1,0 +1,142 @@
+{
+ "chunk": "Expr-5",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.quantile defaults to 'nearest', not pandas' 'linear' interpolation",
+   "applies_to": [
+    "Expr.quantile",
+    "Expr.rolling_quantile",
+    "Expr.rolling_quantile_by"
+   ],
+   "trap": "`Expr.quantile`, `Expr.rolling_quantile` and `Expr.rolling_quantile_by` all default to `interpolation='nearest'`. pandas and numpy default to linear interpolation, so ported code can silently return a different number. For example, `quantile(0.3)` on `[0..5]` with `'nearest'` returns one of the actual elements, while linear interpolation gives `1.5`. Pass `interpolation='linear'` explicitly when you need pandas-compatible results.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [0, 1, 2, 3, 4, 5]})\nout = df.select(\n    default=pl.col(\"a\").quantile(0.3),\n    linear=pl.col(\"a\").quantile(0.3, interpolation=\"linear\"),\n)\nprint(out.to_dict(as_series=False))\nroll = df.select(\n    default=pl.col(\"a\").rolling_quantile(0.3, window_size=4),\n    linear=pl.col(\"a\").rolling_quantile(0.3, interpolation=\"linear\", window_size=4),\n)\nprint(roll.to_dict(as_series=False))\n",
+   "output": "{'default': [2.0], 'linear': [1.5]}\n{'default': [None, None, None, 1.0, 2.0, 3.0], 'linear': [None, None, None, 0.8999999999999999, 1.9, 2.9]}"
+  },
+  {
+   "title": "Use replace_strict, not replace, to map values to a new dtype or set a default",
+   "applies_to": [
+    "Expr.replace",
+    "Expr.replace_strict"
+   ],
+   "trap": "`Expr.replace` replaces values with values of the same data type, and it keeps every unmatched value unchanged. Its `default` and `return_dtype` parameters have been deprecated since 1.0.0. To map codes to labels, use `Expr.replace_strict`. `Expr.replace_strict` raises `InvalidOperationError` if any non-null value is not covered by the mapping and no `default` is given, so pass `default=` (and `return_dtype=` if needed) to handle unmatched values.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"code\": [1, 2, 3]})\nmapping = {1: \"one\", 2: \"two\"}\ntry:\n    df.select(pl.col(\"code\").replace_strict(mapping))\nexcept Exception as e:\n    print(repr(e).split(\"(\")[0])\nout = df.with_columns(\n    kept=pl.col(\"code\").replace({1: 10}),\n    label=pl.col(\"code\").replace_strict(mapping, default=\"other\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "InvalidOperationError\n{'code': [1, 2, 3], 'kept': [10, 2, 3], 'label': ['one', 'two', 'other']}"
+  },
+  {
+   "title": "Expr.rank leaves nulls null and averages ties into floats by default",
+   "applies_to": [
+    "Expr.rank"
+   ],
+   "trap": "Unlike SQL window ranking, `Expr.rank` does not rank null values last. It only ranks the non-null values and keeps the nulls as null. The default `method='average'` produces Float64 ranks such as `2.5` for ties, while methods like `'dense'` or `'ordinal'` give UInt32 integer ranks. Use `descending=True` for top-is-1 ranking. If you need nulls ranked last, fill them explicitly afterwards with `Expr.fill_null`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"score\": [30, None, 10, 30]})\nr = pl.col(\"score\").rank(\"dense\", descending=True)\nout = df.with_columns(\n    avg=pl.col(\"score\").rank(),\n    dense_desc=r,\n    nulls_last=r.fill_null(r.max() + 1),\n)\nprint(out.to_dict(as_series=False))\nprint(out.schema)\n",
+   "output": "{'score': [30, None, 10, 30], 'avg': [2.5, None, 1.0, 2.5], 'dense_desc': [1, None, 2, 1], 'nulls_last': [1, 3, 2, 1]}\nSchema({'score': Int64, 'avg': Float64, 'dense_desc': UInt32, 'nulls_last': UInt32})"
+  },
+  {
+   "title": "A single null in a fixed rolling window nulls the result unless min_samples is lowered",
+   "applies_to": [
+    "Expr.rolling_mean",
+    "Expr.rolling_max",
+    "Expr.rolling_min",
+    "Expr.rolling_median",
+    "Expr.rolling_quantile"
+   ],
+   "trap": "For the count-based rolling functions, `min_samples` defaults to `window_size`. Every window that contains a null, and every leading row, therefore yields null. Set `min_samples=1` (or another lower value) to compute over the non-null values that are present. The old `min_periods` parameter was renamed to `min_samples` in 1.21.0, so always use the new name. Windows are trailing (the row itself plus the `window_size - 1` rows before it) unless `center=True`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1.0, None, 3.0, 4.0]})\nout = df.with_columns(\n    mean_default=pl.col(\"x\").rolling_mean(2),\n    mean_min1=pl.col(\"x\").rolling_mean(2, min_samples=1),\n    max_default=pl.col(\"x\").rolling_max(2),\n    max_min1=pl.col(\"x\").rolling_max(2, min_samples=1),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'x': [1.0, None, 3.0, 4.0], 'mean_default': [None, None, None, 3.5], 'mean_min1': [1.0, 1.0, 3.0, 3.5], 'max_default': [None, None, None, 4.0], 'max_min1': [1.0, 1.0, 3.0, 4.0]}"
+  },
+  {
+   "title": "rolling_*_by windows are right-closed (t - window, t] with min_samples=1 by default",
+   "applies_to": [
+    "Expr.rolling_mean_by",
+    "Expr.rolling_max_by",
+    "Expr.rolling_min_by",
+    "Expr.rolling_median_by",
+    "Expr.rolling_quantile_by",
+    "Expr.rolling_rank_by"
+   ],
+   "trap": "The `_by` rolling functions default to `closed='right'`, so a `'2d'` window at day t covers (t-2d, t] and excludes the row exactly 2 days earlier. Pass `closed='both'` if you want both endpoints included. Unlike `Expr.rolling_mean`, their `min_samples` defaults to `1`, so the first rows are not null. When `by` is an integer column, `window_size` must use the `'i'` unit, such as `'2i'`. These functions are marked unstable.",
+   "example": "import polars as pl\nfrom datetime import date\n\ndf = pl.DataFrame({\n    \"d\": [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)],\n    \"i\": [0, 1, 2],\n    \"v\": [1.0, 2.0, 3.0],\n})\nout = df.with_columns(\n    right=pl.col(\"v\").rolling_mean_by(\"d\", window_size=\"2d\"),\n    both=pl.col(\"v\").rolling_mean_by(\"d\", window_size=\"2d\", closed=\"both\"),\n    by_int=pl.col(\"v\").rolling_max_by(\"i\", window_size=\"2i\"),\n)\nprint(out.select(\"right\", \"both\", \"by_int\").to_dict(as_series=False))\n",
+   "output": "{'right': [1.0, 1.5, 2.5], 'both': [1.0, 1.5, 2.0], 'by_int': [1.0, 2.0, 3.0]}"
+  },
+  {
+   "title": "Expr.pct_change does not forward-fill nulls the way old pandas did",
+   "applies_to": [
+    "Expr.pct_change"
+   ],
+   "trap": "`Expr.pct_change` preserves nulls, which matches pandas `fill_method=None`. In the documented example, the null row and the row right after it both come out null. Code ported from older pandas, where padding was the default, will therefore get extra nulls. If you want the padded behaviour, call `Expr.forward_fill` before `Expr.pct_change`. The first `n` rows are always null.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [10, 11, 12, None, 12]})\nout = df.with_columns(\n    pct=pl.col(\"a\").pct_change(),\n    pct_ffill=pl.col(\"a\").forward_fill().pct_change(),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'a': [10, 11, 12, None, 12], 'pct': [None, 0.1, 0.09090909090909091, None, None], 'pct_ffill': [None, 0.1, 0.09090909090909091, 0.0, 0.0]}"
+  },
+  {
+   "title": "Expr.product of an empty or all-null group returns 1, not null",
+   "applies_to": [
+    "Expr.product"
+   ],
+   "trap": "When there are no non-null values, `Expr.product` returns `1`. In a `DataFrame.group_by` aggregation, a group whose values are all missing therefore reports a product of 1 instead of null, which is a silently wrong result. Aggregate `Expr.count` alongside the product and treat groups with a count of 0 as missing, for example by guarding with `pl.when` or by masking afterwards with `Series.zip_with`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [2, 3, None]})\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").product().alias(\"naive\"),\n    pl.col(\"v\").count().alias(\"n\"),\n)\nprint(out.to_dict(as_series=False))\nnulls = pl.Series(\"safe\", [None] * out.height, dtype=pl.Int64)\nsafe = out.get_column(\"naive\").zip_with(out.get_column(\"n\") > 0, nulls)\nprint(safe.to_list())\n",
+   "output": "{'g': ['a', 'b'], 'naive': [6, 1], 'n': [2, 0]}\n[6, None]"
+  },
+  {
+   "title": "Integer base with integer exponent stays integer in Expr.pow",
+   "applies_to": [
+    "Expr.pow"
+   ],
+   "trap": "`Expr.pow` follows the dtype of the base unless the exponent is a float, in which case the result follows the float exponent. `pl.col(\"x\").pow(2)` on an Int64 column stays Int64. For negative or fractional powers, do not pass an integer exponent. Pass a float exponent such as `-1.0`, or cast the base to `pl.Float64` first, as the docstring recommends.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 2, 4]})\nout = df.with_columns(\n    sq=pl.col(\"x\").pow(2),\n    inv=pl.col(\"x\").pow(-1.0),\n    inv_cast=pl.col(\"x\").cast(pl.Float64).pow(-1),\n    root=pl.col(\"x\").pow(0.5),\n)\nprint(out.schema)\nprint(out.to_dict(as_series=False))\n",
+   "output": "Schema({'x': Int64, 'sq': Int64, 'inv': Float64, 'inv_cast': Float64, 'root': Float64})\n{'x': [1, 2, 4], 'sq': [1, 4, 16], 'inv': [1.0, 0.5, 0.25], 'inv_cast': [1.0, 0.5, 0.25], 'root': [1.0, 1.4142135623730951, 2.0]}"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The signatures confirm the `'nearest'` default for all three methods, and the output shows 2.0 vs 1.5 plus differing rolling values.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The deprecations, same-dtype behaviour and `InvalidOperationError` are all backed by the docstrings and the output.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "fix",
+   "reason": "Integer ranks are shown only for `'dense'` (output, UInt32) and `'ordinal'` (docstring, u32), so naming `'min'` as an integer-producing method is unsupported.",
+   "trap": "Unlike SQL window ranking, `Expr.rank` does not rank null values last. It only ranks the non-null values and keeps the nulls as null. The default `method='average'` produces Float64 ranks such as `2.5` for ties, while methods like `'dense'` or `'ordinal'` give UInt32 integer ranks. Use `descending=True` for top-is-1 ranking. If you need nulls ranked last, fill them explicitly afterwards with `Expr.fill_null`."
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows nulls for the leading row and for windows containing a null under the default, and values with `min_samples=1`, which matches the docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The right vs both results (2.5 vs 2.0), the non-null first rows, the `'2i'` integer window and the unstable status are all supported by the output and docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output reproduces the docstring's null propagation, and the forward-filled variant yields 0.0 as described.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows product 1 for the all-null group, and both the `pl.when` guard (docstring) and the `Series.zip_with` mask (output) are supported.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The dtype rule matches the docstring, and the schema shows Int64 for `pow(2)` and Float64 for float exponents or a float-cast base.",
+   "trap": ""
+  }
+ ]
+}

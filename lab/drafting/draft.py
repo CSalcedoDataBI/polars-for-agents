@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -152,7 +153,7 @@ Failures (the note as drafted, then what went wrong):
 """
 
 
-def call_claude(prompt: str, chunk: str, kind: str, budget: Budget, model: str | None) -> dict | None:
+def call_claude(prompt: str, chunk: str, kind: str, budget: Budget, model: str | None, schema: Path = SCHEMA) -> dict | None:
     if not budget.acquire():
         print(f"[budget] skip {kind} {chunk}: cap US${budget.cap} reached ({ledger_total():.2f} spent)")
         return None
@@ -162,10 +163,10 @@ def call_claude(prompt: str, chunk: str, kind: str, budget: Budget, model: str |
             p, o = Path(tmp) / "p.md", Path(tmp) / "out.json"
             p.write_text(prompt, encoding="utf-8")
             cmd = ["pwsh", "-NoProfile", "-File", r"D:\MIS-REPO\docker-lab\scripts\claude-review.ps1",
-                   "--prompt-file", str(p), "--schema", str(SCHEMA), "-o", str(o)]
+                   "--prompt-file", str(p), "--schema", str(schema), "-o", str(o)]
             if model:
                 cmd += ["--model", model]
-            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=1800)
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
             m = COST.search(r.stderr)
             usd = float(m.group(1)) if m else (EST_CALL if r.returncode == 0 else 0.0)
             print(f"[{kind}] {chunk}: rc={r.returncode} US${usd:.4f} {r.stderr.strip().splitlines()[-1][:160] if r.stderr.strip() else ''}")
@@ -181,7 +182,9 @@ def run_example(code: str) -> tuple[bool, str]:
         f = Path(tmp) / "example.py"
         f.write_text(code, encoding="utf-8")
         try:
-            r = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, encoding="utf-8", timeout=60, cwd=tmp)
+            env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+            r = subprocess.run([sys.executable, str(f)], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=60, cwd=tmp, env=env)
         except subprocess.TimeoutExpired:
             return False, "timed out after 60 s"
     if r.returncode != 0:

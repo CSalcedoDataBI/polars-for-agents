@@ -1,0 +1,119 @@
+{
+ "chunk": "functions-2",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pl.from_epoch assumes seconds by default, so millisecond timestamps give wrong dates",
+   "applies_to": [
+    "pl.from_epoch"
+   ],
+   "trap": "`pl.from_epoch` defaults to `time_unit=\"s\"`. JavaScript, Java and many APIs emit epoch values in milliseconds. Polars then reads those values as seconds, which gives dates tens of thousands of years in the future and raises no error. Always pass `time_unit` (`\"ms\"`, `\"us\"`, `\"ns\"` or `\"d\"`) to match your data. The unit also changes the output dtype: `\"d\"` returns `pl.Date`, and `\"ms\"` returns `Datetime(\"ms\")`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"ts_ms\": [1666683077000, 1666683099000]})\n\n# Wrong: default time_unit=\"s\" treats milliseconds as seconds\nwrong = df.select(pl.from_epoch(\"ts_ms\").dt.year().alias(\"year_with_default_s\"))\nprint(wrong.to_series().to_list())\n\n# Right: state the unit explicitly\nright = df.select(pl.from_epoch(\"ts_ms\", time_unit=\"ms\").alias(\"ts\"))\nprint(right.to_series().to_list())\nprint(right.schema)\n",
+   "output": "[54785, 54785]\n[datetime.datetime(2022, 10, 25, 7, 31, 17), datetime.datetime(2022, 10, 25, 7, 31, 39)]\nSchema({'ts': Datetime(time_unit='ms', time_zone=None)})"
+  },
+  {
+   "title": "int_range excludes its end but datetime_range includes it, and both return an Expr by default",
+   "applies_to": [
+    "pl.int_range",
+    "pl.datetime_range"
+   ],
+   "trap": "`pl.int_range` works like Python `range`, so `end` is exclusive. `pl.datetime_range` defaults to `closed=\"both\"`, so `end` is included. Mixing the two leads to off-by-one row counts, so pass `closed=\"left\"` to `pl.datetime_range` when you want a half-open range. Both functions default to `eager=False` and return a `pl.Expr`, not a `pl.Series`. Pass `eager=True` when you need a concrete `Series` outside a frame context.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\nprint(isinstance(pl.int_range(0, 3), pl.Expr))  # True: Expr, not Series\nprint(pl.int_range(0, 3, eager=True).to_list())  # end excluded: [0, 1, 2]\n\nstart, end = datetime(2024, 1, 1), datetime(2024, 1, 3)\nboth = pl.datetime_range(start, end, \"1d\", eager=True)\nleft = pl.datetime_range(start, end, \"1d\", closed=\"left\", eager=True)\nprint(both.len(), left.len())  # 3 (end included) vs 2\n",
+   "output": "True\n[0, 1, 2]\n3 2"
+  },
+  {
+   "title": "pl.first and pl.last mean first column without arguments and first value with arguments",
+   "applies_to": [
+    "pl.first",
+    "pl.last"
+   ],
+   "trap": "Called with no arguments, `pl.first()` and `pl.last()` select the first or last *column* of the context and keep every row. Called with column names, they return the first or last *value* of those columns, which is a single row. Adding or dropping an argument therefore changes the shape of the result completely. Write `pl.col(name).first()` when you want a value. Use `pl.first()` with no argument only when you mean positional column selection.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 8, 3], \"b\": [4, 5, 2]})\n\nprint(df.select(pl.first()).to_dict(as_series=False))      # first COLUMN 'a', 3 rows\nprint(df.select(pl.first(\"b\")).to_dict(as_series=False))   # first VALUE of 'b', 1 row\nprint(df.select(pl.col(\"b\").first()).to_dict(as_series=False))  # explicit equivalent\nprint(df.select(pl.last()).to_dict(as_series=False))       # last COLUMN 'b', 3 rows\nprint(df.select(pl.last(\"a\")).to_dict(as_series=False))    # last VALUE of 'a' -> 3\n",
+   "output": "{'a': [1, 8, 3]}\n{'b': [4]}\n{'b': [4]}\n{'b': [4, 5, 2]}\n{'a': [3]}"
+  },
+  {
+   "title": "pl.duration is a fixed length with no months; use Expr.dt.offset_by for calendar shifts",
+   "applies_to": [
+    "pl.duration"
+   ],
+   "trap": "`pl.duration` only accepts fixed units from `weeks` down to `nanoseconds`, so `days=1` means exactly 24 hours. It has no `months` or `years` parameter. Faking a month as `days=30` silently gives wrong dates. For calendar arithmetic such as months or years, use `Expr.dt.offset_by` with a duration string such as `\"1mo\"`.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"dt\": [datetime(2024, 1, 31), datetime(2024, 2, 29)]})\n\nout = df.with_columns(\n    plus_30d=pl.col(\"dt\") + pl.duration(days=30),  # fixed: 2024-03-01, 2024-03-30\n    plus_1mo=pl.col(\"dt\").dt.offset_by(\"1mo\"),     # calendar: 2024-02-29, 2024-03-29\n)\nfor row in out.rows():\n    print(row)\n",
+   "output": "(datetime.datetime(2024, 1, 31, 0, 0), datetime.datetime(2024, 3, 1, 0, 0), datetime.datetime(2024, 2, 29, 0, 0))\n(datetime.datetime(2024, 2, 29, 0, 0), datetime.datetime(2024, 3, 30, 0, 0), datetime.datetime(2024, 3, 29, 0, 0))"
+  },
+  {
+   "title": "pl.len counts rows including nulls, unlike a column count",
+   "applies_to": [
+    "pl.len"
+   ],
+   "trap": "`pl.len()` is the equivalent of SQL `COUNT(*)`: it counts the rows in the context, nulls included. `Expr.count` on a column counts only its non-null values. Swapping one for the other in a `DataFrame.group_by` aggregation silently gives wrong group sizes whenever nulls are present. Use `pl.len()` for row counts and `pl.col(...).count()` for non-null counts.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"x\", \"x\", \"y\"], \"v\": [1, None, None]})\n\nprint(df.select(pl.len(), pl.col(\"v\").count().alias(\"v_non_null\")).to_dicts())\nprint(\n    df.group_by(\"g\", maintain_order=True)\n    .agg(pl.len(), pl.col(\"v\").count().alias(\"v_non_null\"))\n    .to_dicts()\n)\n",
+   "output": "[{'len': 3, 'v_non_null': 1}]\n[{'g': 'x', 'len': 2, 'v_non_null': 1}, {'g': 'y', 'len': 1, 'v_non_null': 0}]"
+  },
+  {
+   "title": "pl.groups is deprecated; collect row indices with with_row_index and group_by",
+   "applies_to": [
+    "pl.groups"
+   ],
+   "trap": "`pl.groups` (sugar for `Expr.agg_groups`) is deprecated and slated for removal. Code that relies on it to get the row positions in each group will break when it is removed. The replacement is `DataFrame.with_row_index` followed by `DataFrame.group_by(...).agg(pl.col(\"index\"))`. Pass `maintain_order=True` if you need the groups in first-appearance order.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"b\", \"a\"], \"v\": [10, 20, 30]})\n\n# Replacement for the deprecated pl.groups(\"g\")\nout = (\n    df.with_row_index()\n    .group_by(\"g\", maintain_order=True)\n    .agg(pl.col(\"index\"))\n)\nprint(out.to_dicts())\n",
+   "output": "[{'g': 'a', 'index': [0, 2]}, {'g': 'b', 'index': [1]}]"
+  },
+  {
+   "title": "Use datetime_ranges, not datetime_range, for per-row ranges from columns",
+   "applies_to": [
+    "pl.datetime_range",
+    "pl.datetime_ranges",
+    "pl.int_ranges"
+   ],
+   "trap": "`pl.datetime_range` builds one range, so its `start` and `end` must each resolve to a single value. Passing multi-row columns raises an error. For one range per row, use `pl.datetime_ranges` (or `pl.int_ranges` for integers). These return a `List` column, not flat values. Call `DataFrame.explode` afterwards if you want one row per generated timestamp.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\n    \"id\": [1, 2],\n    \"start\": [datetime(2024, 1, 1), datetime(2024, 1, 5)],\n    \"end\": [datetime(2024, 1, 2), datetime(2024, 1, 6)],\n})\n\ntry:\n    df.select(pl.datetime_range(\"start\", \"end\", \"1d\"))\nexcept Exception as e:\n    print(repr(e).split(\"(\")[0])\n\nout = df.with_columns(day=pl.datetime_ranges(\"start\", \"end\", \"1d\"))\nprint(out.schema[\"day\"])  # List(Datetime)\nfor row in out.explode(\"day\").select(\"id\", \"day\").rows():\n    print(row)\n",
+   "output": "ShapeError\nList(Datetime(time_unit='us', time_zone=None))\n(1, datetime.datetime(2024, 1, 1, 0, 0))\n(1, datetime.datetime(2024, 1, 2, 0, 0))\n(2, datetime.datetime(2024, 1, 5, 0, 0))\n(2, datetime.datetime(2024, 1, 6, 0, 0))"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows year 54785 under the default `time_unit=\"s\"` and correct 2022 dates with `Datetime(\"ms\")` when `\"ms\"` is passed, and the docstring lists the per-unit dtypes.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output confirms the `Expr` default and the exclusive `int_range` end, the 3-versus-2 lengths confirm `closed=\"both\"` versus `\"left\"`, and both signatures show `eager=False`.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output matches every claim: no-argument calls return the full first or last column, and named calls return a single value row.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The signature has no months or years parameter, the docstring says `days=1` is exactly 24 hours and points to `Expr.dt.offset_by`, and the output shows that 30 days and 1mo diverge.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows `pl.len` counting 3 rows (2 and 1 per group) while `Expr.count` gives non-null counts of 1 and 0, which matches the claim.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstring confirms the deprecation, removal in 2.0 and the exact replacement, and the output demonstrates that replacement working with `maintain_order=True`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows a ShapeError for multi-row `pl.datetime_range` inputs, a `List(Datetime)` schema from `pl.datetime_ranges`, and per-row timestamps after `DataFrame.explode`.",
+   "trap": ""
+  }
+ ]
+}

@@ -1,0 +1,138 @@
+{
+ "chunk": "DataFrame-2",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "DataFrame.insert_column mutates the frame in place while DataFrame.hstack does not",
+   "applies_to": [
+    "DataFrame.insert_column",
+    "DataFrame.hstack"
+   ],
+   "trap": "Most Polars methods return a new frame, and `DataFrame.hstack` follows that rule unless you pass `in_place=True`. `DataFrame.insert_column` breaks the rule: its docstring says *this operation is in place*. It changes the original `df` as well as returning it. Call `DataFrame.clone` first if the original must stay untouched.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\nout = df.hstack([pl.Series(\"c\", [5, 6])])\nprint(df.columns, out.columns)  # df unchanged\n\ndf.insert_column(1, pl.Series(\"z\", [0, 0]))\nprint(df.columns)  # df itself was modified\n\norig = pl.DataFrame({\"a\": [1, 2]})\nsafe = orig.clone()\nsafe.insert_column(0, pl.Series(\"idx\", [10, 11]))\nprint(orig.columns, safe.columns)",
+   "output": "['a', 'b'] ['a', 'b', 'c']\n['a', 'z', 'b']\n['a'] ['idx', 'a']"
+  },
+  {
+   "title": "Null join keys never match unless nulls_equal=True",
+   "applies_to": [
+    "DataFrame.join"
+   ],
+   "trap": "By default `DataFrame.join` uses `nulls_equal=False`, so a null key on the left does not match a null key on the right. Inner joins silently drop those rows, and left joins leave the right-hand columns null. Pass `nulls_equal=True` when null keys should pair up. The old parameter name `join_nulls` was renamed to `nulls_equal` in 1.24.",
+   "example": "import polars as pl\n\nleft = pl.DataFrame({\"k\": [1, None], \"x\": [\"a\", \"b\"]})\nright = pl.DataFrame({\"k\": [1, None], \"y\": [\"A\", \"B\"]})\n\ndefault = left.join(right, on=\"k\", how=\"left\").sort(\"x\")\nmatched = left.join(right, on=\"k\", how=\"left\", nulls_equal=True).sort(\"x\")\nprint(default[\"y\"].to_list())  # ['A', None]\nprint(matched[\"y\"].to_list())  # ['A', 'B']\n\nprint(left.join(right, on=\"k\").height)  # 1\nprint(left.join(right, on=\"k\", nulls_equal=True).height)  # 2",
+   "output": "['A', None]\n['A', 'B']\n1\n2"
+  },
+  {
+   "title": "DataFrame.is_duplicated flags every copy and has no subset argument",
+   "applies_to": [
+    "DataFrame.is_duplicated",
+    "DataFrame.is_unique"
+   ],
+   "trap": "`DataFrame.is_duplicated` and `DataFrame.is_unique` take no arguments, so there is no `subset` or `keep` option. They compare whole rows and mark **all** copies of a duplicated row, not just the later ones. To check only some columns, pack them with `pl.struct` and call `Expr.is_duplicated`. To flag only the later copies, use the negation of `Expr.is_first_distinct`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 1], \"b\": [\"x\", \"y\", \"x\"], \"c\": [9, 8, 7]})\nprint(df.is_duplicated().to_list())  # whole rows: all False\n\nsub = df.select(pl.struct(\"a\", \"b\").is_duplicated()).to_series()\nprint(sub.to_list())  # [True, False, True] - every copy\n\nlater = df.select(~pl.struct(\"a\", \"b\").is_first_distinct()).to_series()\nprint(later.to_list())  # [False, False, True] - pandas keep='first'",
+   "output": "[False, False, False]\n[True, False, True]\n[False, False, True]"
+  },
+  {
+   "title": "DataFrame.n_unique counts unique rows, not unique values per column",
+   "applies_to": [
+    "DataFrame.n_unique"
+   ],
+   "trap": "`DataFrame.n_unique` does not return one count per column. It returns a single `int`: the number of distinct rows, or distinct row-subsets when you pass `subset`. For per-column counts, use `df.select(pl.all().n_unique())`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 1, 2], \"b\": [\"x\", \"y\", \"x\"]})\nprint(df.n_unique())  # 3 distinct rows\nprint(df.n_unique(subset=\"a\"))  # 2\nprint(df.select(pl.all().n_unique()).to_dicts())  # per column",
+   "output": "3\n2\n[{'a': 2, 'b': 2}]"
+  },
+  {
+   "title": "DataFrame.pivot raises on duplicates unless aggregate_function is given",
+   "applies_to": [
+    "DataFrame.pivot"
+   ],
+   "trap": "With the default `aggregate_function=None`, `DataFrame.pivot` does no aggregation. It raises an error when one output cell would receive several values. Pass an aggregate such as `'sum'`, `'mean'`, `'first'` or `'len'` when the `index`/`on` combinations are not unique. Use `on=` rather than the old `columns=` name, and pass `index=` and `values=` as keywords.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 1, 2], \"k\": [\"p\", \"p\", \"q\"], \"v\": [10, 20, 30]})\ntry:\n    df.pivot(on=\"k\", index=\"id\", values=\"v\")\nexcept Exception as e:\n    print(type(e))\n\nout = df.pivot(on=\"k\", index=\"id\", values=\"v\", aggregate_function=\"sum\")\nprint(out.columns)\nprint(out.sort(\"id\").rows())",
+   "output": "<class 'polars.exceptions.ComputeError'>\n['id', 'p', 'q']\n[(1, 30, 0), (2, 0, 30)]"
+  },
+  {
+   "title": "partition_by(as_dict=True) keys are tuples even for one column",
+   "applies_to": [
+    "DataFrame.partition_by"
+   ],
+   "trap": "With `as_dict=True`, `DataFrame.partition_by` uses tuples of the group values as dictionary keys, even when you partition by a single column. Looking up `parts['a']` raises `KeyError`; use `parts[('a',)]` instead. The key columns are kept in each part by default. Pass `include_key=False` to drop them.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"b\", \"a\"], \"v\": [1, 2, 3]})\nparts = df.partition_by(\"g\", as_dict=True)\nprint(list(parts.keys()))\nprint(\"a\" in parts, (\"a\",) in parts)\nprint(parts[(\"a\",)][\"v\"].to_list())\nprint(parts[(\"a\",)].columns)\n\nno_key = df.partition_by(\"g\", as_dict=True, include_key=False)\nprint(no_key[(\"b\",)].columns)",
+   "output": "[('a',), ('b',)]\nFalse True\n[1, 3]\n['g', 'v']\n['v']"
+  },
+  {
+   "title": "DataFrame.melt is deprecated: use DataFrame.unpivot with index and on",
+   "applies_to": [
+    "DataFrame.melt",
+    "DataFrame.unpivot"
+   ],
+   "trap": "`DataFrame.melt` has been deprecated since 1.0.0. The replacement is `DataFrame.unpivot`, and its parameters are renamed: `id_vars` becomes `index` and `value_vars` becomes `on`. Do not copy pandas-style `melt(id_vars=..., value_vars=...)` calls; write `DataFrame.unpivot` from the start. `variable_name` and `value_name` still name the two output columns.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 2], \"x\": [3, 4], \"y\": [5, 6]})\nlong = df.unpivot(\n    index=\"id\", on=[\"x\", \"y\"], variable_name=\"var\", value_name=\"val\"\n)\nprint(long.columns)\nprint(long.sort(\"id\", \"var\").rows())",
+   "output": "['id', 'var', 'val']\n[(1, 'x', 3), (1, 'y', 5), (2, 'x', 4), (2, 'y', 6)]"
+  },
+  {
+   "title": "DataFrame.max has no axis: use the *_horizontal methods for row-wise results",
+   "applies_to": [
+    "DataFrame.max",
+    "DataFrame.min",
+    "DataFrame.mean",
+    "DataFrame.max_horizontal",
+    "DataFrame.min_horizontal",
+    "DataFrame.mean_horizontal"
+   ],
+   "trap": "`DataFrame.max`, `DataFrame.min` and `DataFrame.mean` take no `axis` argument. They always aggregate down each column into a one-row frame. For row-wise results, use `DataFrame.max_horizontal`, `DataFrame.min_horizontal` or `DataFrame.mean_horizontal`, which return a **Series** (named `max`/`min`/`mean`), not a frame. `DataFrame.mean_horizontal` ignores nulls by default; pass `ignore_nulls=False` to make any null produce a null result. To add a row-wise column, use `pl.max_horizontal` inside `DataFrame.with_columns`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None], \"b\": [4.0, 6.0]})\nprint(df.max().rows())  # one row: column-wise\n\nrow_max = df.max_horizontal()\nprint(row_max.name, row_max.to_list())  # Series named 'max'\nprint(df.mean_horizontal().to_list())  # nulls ignored\nprint(df.mean_horizontal(ignore_nulls=False).to_list())\nout = df.with_columns(pl.max_horizontal(\"a\", \"b\").alias(\"row_max\"))\nprint(out.columns, out[\"row_max\"].to_list())",
+   "output": "[(1, 6.0)]\nmax [4.0, 6.0]\n[2.5, 6.0]\n[2.5, None]\n['a', 'b', 'row_max'] [4.0, 6.0]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows `hstack` leaving `df` unchanged and `insert_column` mutating it, and the docstring says the operation is in place and returns a DataFrame.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "fix",
+   "reason": "The null-key behaviour is supported, but the claim about pandas `merge` matching missing keys is not backed by the output or docstrings.",
+   "trap": "By default `DataFrame.join` uses `nulls_equal=False`, so a null key on the left does not match a null key on the right. Inner joins silently drop those rows, and left joins leave the right-hand columns null. Pass `nulls_equal=True` when null keys should pair up. The old parameter name `join_nulls` was renamed to `nulls_equal` in 1.24."
+  },
+  {
+   "index": 2,
+   "verdict": "fix",
+   "reason": "The Polars behaviour is supported by the signatures and output, but the claims about pandas `duplicated()` defaults are not backed by the material.",
+   "trap": "`DataFrame.is_duplicated` and `DataFrame.is_unique` take no arguments, so there is no `subset` or `keep` option. They compare whole rows and mark **all** copies of a duplicated row, not just the later ones. To check only some columns, pack them with `pl.struct` and call `Expr.is_duplicated`. To flag only the later copies, use the negation of `Expr.is_first_distinct`."
+  },
+  {
+   "index": 3,
+   "verdict": "fix",
+   "reason": "The behaviour of `n_unique` is supported by the docstring and output, but the claim about pandas `nunique()` is not backed by the material.",
+   "trap": "`DataFrame.n_unique` does not return one count per column. It returns a single `int`: the number of distinct rows, or distinct row-subsets when you pass `subset`. For per-column counts, use `df.select(pl.all().n_unique())`."
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The ComputeError output and the docstring support the no-aggregation error, the listed aggregate names, the `columns` to `on` rename and the keyword-only `index`/`values`.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows tuple keys for a single column, the failed string lookup, key columns kept by default and the effect of `include_key=False`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The deprecation since 1.0.0, the parameter renames and the naming arguments are all stated in the docstrings and confirmed by the output.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The signatures show no `axis` argument, the docstrings give the Series names and `ignore_nulls` default, and the output confirms every behaviour claimed.",
+   "trap": ""
+  }
+ ]
+}

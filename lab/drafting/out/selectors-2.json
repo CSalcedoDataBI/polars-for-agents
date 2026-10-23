@@ -1,0 +1,90 @@
+{
+ "chunk": "selectors-2",
+ "group": "selectors",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Python ints infer as Int64, so cs.unsigned_integer() can silently match nothing",
+   "applies_to": [
+    "cs.unsigned_integer"
+   ],
+   "trap": "`cs.unsigned_integer` selects by dtype, not by value. A column of non-negative Python ints is inferred as `pl.Int64`, so it is never selected. When nothing matches, `DataFrame.select` returns an empty frame instead of raising an error. If you want unsigned columns, declare them with `schema_overrides` (or cast them), and check what matched before you rely on it.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\nprint(df.schema)\nprint(df.select(cs.unsigned_integer()).columns)\n\ndf2 = pl.DataFrame(\n    {\"a\": [1, 2], \"b\": [3, 4]},\n    schema_overrides={\"a\": pl.UInt32},\n)\nprint(df2.select(cs.unsigned_integer()).columns)",
+   "output": "Schema({'a': Int64, 'b': Int64})\n[]\n['a']"
+  },
+  {
+   "title": "~cs.unsigned_integer() means every other column, not the signed integers",
+   "applies_to": [
+    "cs.unsigned_integer"
+   ],
+   "trap": "`~cs.unsigned_integer()` takes the complement over all columns. The result includes strings, floats, dates and so on, not just signed integers. Code that then applies integer math to that selection can fail or touch the wrong columns. Use `cs.signed_integer()` for signed integers, or the set difference `cs.integer() - cs.unsigned_integer()`.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame(\n    {\"foo\": [-1, -2], \"bar\": [3, 4], \"zap\": [\"ab\", \"cd\"]},\n    schema_overrides={\"bar\": pl.UInt32},\n)\nprint(df.select(~cs.unsigned_integer()).columns)\nprint(df.select(cs.signed_integer()).columns)\nprint(df.select(cs.integer() - cs.unsigned_integer()).columns)",
+   "output": "['foo', 'zap']\n['foo']\n['foo']"
+  },
+  {
+   "title": "pl.col(pl.UInt32) matches one width; cs.unsigned_integer() matches all unsigned widths",
+   "applies_to": [
+    "cs.unsigned_integer"
+   ],
+   "trap": "Selecting by a single dtype, such as `pl.col(pl.UInt32)`, only picks columns of exactly that dtype. `UInt8`, `UInt16` and `UInt64` columns are silently left out. If you mean every unsigned integer column, use `cs.unsigned_integer()`, which covers all of these unsigned widths.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame(\n    {\"small\": [1, 2], \"bar\": [3, 4], \"baz\": [5, 6]},\n    schema_overrides={\"small\": pl.UInt8, \"bar\": pl.UInt32, \"baz\": pl.UInt64},\n)\nprint(df.select(pl.col(pl.UInt32)).columns)\nprint(df.select(cs.unsigned_integer()).columns)",
+   "output": "['bar']\n['small', 'bar', 'baz']"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "Casting negative values to an unsigned dtype fails under the default strict cast",
+    "applies_to": [
+     "cs.unsigned_integer",
+     "Expr.cast"
+    ],
+    "trap": "A common move is to cast columns to an unsigned type so that `cs.unsigned_integer()` picks them up. With the default `strict=True`, `Expr.cast` raises an error if any value cannot be represented, such as a negative number. Passing `strict=False` turns those values into null instead of raising. Choose the behaviour you want on purpose, and check null counts after a non-strict cast.",
+    "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"x\": [-1, 5]})\ntry:\n    df.with_columns(pl.col(\"x\").cast(pl.UInt32))\nexcept Exception as e:\n    print(type(e))\n\nout = df.with_columns(pl.col(\"x\").cast(pl.UInt32, strict=False))\nprint(out.select(cs.unsigned_integer()))\nprint(out.null_count())"
+   },
+   "problems": [
+    "example failed: UnicodeEncodeError: 'charmap' codec can't encode characters in position 15-22: character maps to <undefined>"
+   ]
+  },
+  {
+   "note": {
+    "title": "Call the selector: cs.unsigned_integer() needs parentheses",
+    "applies_to": [
+     "cs.unsigned_integer"
+    ],
+    "trap": "`cs.unsigned_integer` is a function that returns a selector. If you pass the bare function object to `DataFrame.select`, it is not treated as a column selection and the call fails. Write `df.select(cs.unsigned_integer())` instead.",
+    "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame(\n    {\"bar\": [3, 4], \"zap\": [\"ab\", \"cd\"]},\n    schema_overrides={\"bar\": pl.UInt32},\n)\ntry:\n    df.select(cs.unsigned_integer)\nexcept Exception as e:\n    print(type(e))\nprint(df.select(cs.unsigned_integer()).columns)",
+    "output": "<class 'TypeError'>\n['bar']"
+   },
+   "problems": [
+    "verify: dropped - Forgetting the parentheses fails loudly with a TypeError, so it is trivial syntax that an agent would notice at once rather than a silent trap."
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows that non-negative Python ints infer as Int64, that `cs.unsigned_integer()` matches nothing without raising, and that `schema_overrides` fixes it.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output and docstring confirm that `~cs.unsigned_integer()` returns every non-unsigned column, including the string column, while `cs.signed_integer()` and the set difference return only signed ints.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `pl.col(pl.UInt32)` picks only the UInt32 column while `cs.unsigned_integer()` picks the UInt8, UInt32 and UInt64 columns, and the docstring says it selects all unsigned integer columns.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "drop",
+   "reason": "Forgetting the parentheses fails loudly with a TypeError, so it is trivial syntax that an agent would notice at once rather than a silent trap.",
+   "trap": ""
+  }
+ ]
+}

@@ -1,0 +1,117 @@
+{
+ "chunk": "Expr.list-2",
+ "group": "Expr.list",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Set to_struct upper_bound from the real maximum list length or extra elements are silently dropped",
+   "applies_to": [
+    "Expr.list.to_struct"
+   ],
+   "trap": "Since 1.33.0, when `fields` is not a sequence of names, `upper_bound` is treated as ground truth for the number of struct fields. Elements beyond that width are dropped silently, with no error. Compute the widest list first, for example with `Expr.list.len` and `Expr.max`, and pass that as `upper_bound`. Alternatively, pass an explicit `fields=[...]` list. `n_field_strategy` is deprecated and ignored, so do not rely on `'max_width'` to size the struct.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"n\": [[0, 1], [0, 1, 2]]})\n\n# Wrong: upper_bound too small, the trailing 2 is silently lost\ntruncated = df.select(s=pl.col(\"n\").list.to_struct(upper_bound=2))\nprint(truncated.unnest(\"s\").rows())\n\n# Right: size the struct from the data\nwidth = df.select(pl.col(\"n\").list.len().max()).item()\nfull = df.select(s=pl.col(\"n\").list.to_struct(upper_bound=width))\nprint(width, full.unnest(\"s\").rows())\n\n# Or name the fields explicitly\nnamed = df.select(s=pl.col(\"n\").list.to_struct(fields=[\"x\", \"y\", \"z\"]))\nprint(named.unnest(\"s\").columns)\n",
+   "output": "[(0, 1), (0, 1)]\n3 [(0, 1, None), (0, 1, 2)]\n['x', 'y', 'z']"
+  },
+  {
+   "title": "list.sort puts nulls first by default, even when descending",
+   "applies_to": [
+    "Expr.list.sort"
+   ],
+   "trap": "`Expr.list.sort` defaults to `nulls_last=False`, so nulls inside each list come first in both ascending and descending order. Code that sorts and then takes `Expr.list.first` to get the minimum gets null whenever a list contains a null. Pass `nulls_last=True`, or drop nulls first with `Expr.list.drop_nulls`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[3, None, 1], [2, 5, None]]})\nout = df.select(\n    default=pl.col(\"a\").list.sort(),\n    desc=pl.col(\"a\").list.sort(descending=True),\n    nulls_last=pl.col(\"a\").list.sort(nulls_last=True),\n    min_wrong=pl.col(\"a\").list.sort().list.first(),\n    min_right=pl.col(\"a\").list.sort(nulls_last=True).list.first(),\n)\nfor row in out.to_dicts():\n    print(row)\n",
+   "output": "{'default': [None, 1, 3], 'desc': [None, 3, 1], 'nulls_last': [1, 3, None], 'min_wrong': None, 'min_right': 1}\n{'default': [None, 2, 5], 'desc': [None, 5, 2], 'nulls_last': [2, 5, None], 'min_wrong': None, 'min_right': 2}"
+  },
+  {
+   "title": "Use list.tail for per-row slicing; Expr.tail takes the last rows of the column",
+   "applies_to": [
+    "Expr.list.tail",
+    "Expr.tail"
+   ],
+   "trap": "`pl.col(\"a\").tail(2)` returns the last 2 rows of the column. It does not return the last 2 elements of each list, and its length no longer matches the frame. Use `Expr.list.tail` to slice inside every sublist. `n` may also be a string, which is read as a column name rather than a literal. That lets you supply a different `n` per row.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"k\": [1, 2, 3], \"a\": [[1, 2, 3], [4, 5], [6]]})\n\n# Wrong: last two ROWS, height changes from 3 to 2\nrows = df.select(pl.col(\"a\").tail(2))\nprint(rows.height, rows.to_dicts())\n\n# Right: last two elements of each list\nprint(df.with_columns(t=pl.col(\"a\").list.tail(2)).to_dicts())\n\n# A string n is a column name: per-row n taken from column k\nprint(df.with_columns(t=pl.col(\"a\").list.tail(\"k\")).to_dicts())\n",
+   "output": "2 [{'a': [4, 5]}, {'a': [6]}]\n[{'k': 1, 'a': [1, 2, 3], 't': [2, 3]}, {'k': 2, 'a': [4, 5], 't': [4, 5]}, {'k': 3, 'a': [6], 't': [6]}]\n[{'k': 1, 'a': [1, 2, 3], 't': [3]}, {'k': 2, 'a': [4, 5], 't': [4, 5]}, {'k': 3, 'a': [6], 't': [6]}]"
+  },
+  {
+   "title": "list.unique does not keep first-seen order unless maintain_order=True",
+   "applies_to": [
+    "Expr.list.unique"
+   ],
+   "trap": "pandas `unique` returns values in order of appearance. `Expr.list.unique` defaults to `maintain_order=False`, so the order of the distinct values is not guaranteed. Code that then takes `Expr.list.first` or compares lists across rows can give unstable results. Pass `maintain_order=True` for first-occurrence order, or chain `Expr.list.sort` for a canonical order.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[3, 1, 3, 2, 1], [5, 5, 4]]})\nout = df.select(\n    first_seen=pl.col(\"a\").list.unique(maintain_order=True),\n    canonical=pl.col(\"a\").list.unique().list.sort(),\n)\nfor row in out.to_dicts():\n    print(row)\n",
+   "output": "{'first_seen': [3, 1, 2], 'canonical': [1, 2, 3]}\n{'first_seen': [5, 4], 'canonical': [4, 5]}"
+  },
+  {
+   "title": "list.sum returns 0, not null, for empty or all-null lists",
+   "applies_to": [
+    "Expr.list.sum"
+   ],
+   "trap": "SQL's `SUM` over no values gives NULL, but `Expr.list.sum` returns `0` when a row has no non-null elements. An empty list then looks the same as a list that really sums to zero, which skews downstream filters and averages. If you need SQL semantics, count the non-null elements with `Expr.list.drop_nulls` followed by `Expr.list.len`. Then null out the rows where that count is zero, for example with `Series.zip_with` (or `pl.when` inside an expression).",
+   "example": "import polars as pl\n\ndf = pl.DataFrame(\n    {\"v\": [[1, 2], [], [None, None], [3, -3]]},\n    schema={\"v\": pl.List(pl.Int64)},\n)\nout = df.select(\n    naive=pl.col(\"v\").list.sum(),\n    has_vals=pl.col(\"v\").list.drop_nulls().list.len() > 0,\n)\nnaive = out.get_column(\"naive\")\nnulls = pl.Series([None] * out.height, dtype=naive.dtype)\nsql_like = naive.zip_with(out.get_column(\"has_vals\"), nulls)\n# naive: 3, 0, 0, 0 -> cannot tell empty from a true zero\nprint(naive.to_list())\n# sql_like: 3, None, None, 0\nprint(sql_like.to_list())\n",
+   "output": "[3, 0, 0, 0]\n[3, None, None, 0]"
+  },
+  {
+   "title": "list.std and list.var default to sample statistics (ddof=1), not population",
+   "applies_to": [
+    "Expr.list.std",
+    "Expr.list.var"
+   ],
+   "trap": "`Expr.list.std` and `Expr.list.var` divide by `N - ddof` with `ddof=1` by default, which gives the sample estimate. NumPy's `std`/`var` default to `ddof=0`, so results ported from NumPy code will differ, especially for short lists. Pass `ddof=0` explicitly when you want the population statistic.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [[1, 2, 3, 4]]})\nout = df.select(\n    var_default=pl.col(\"v\").list.var(),\n    var_pop=pl.col(\"v\").list.var(ddof=0),\n    std_default=pl.col(\"v\").list.std(),\n    std_pop=pl.col(\"v\").list.std(ddof=0),\n)\n# var_default = 5/3 (divides by N-1), var_pop = 1.25 (divides by N)\nprint(out.to_dicts())\n",
+   "output": "[{'var_default': 1.6666666666666667, 'var_pop': 1.25, 'std_default': 1.2909944487358056, 'std_pop': 1.118033988749895}]"
+  },
+  {
+   "title": "list.to_array needs an explicit width that every list matches; it does not pad or truncate",
+   "applies_to": [
+    "Expr.list.to_array"
+   ],
+   "trap": "`Expr.list.to_array` converts to a fixed-width `pl.Array`, and `width` is required rather than inferred. It does not truncate lists that are longer than `width`. In the example, a length-3 list with `width=2` raises a `ComputeError` at execution time instead of returning an Array. Normalise the lengths first, for example with `Expr.list.head`, or check `Expr.list.len` before converting.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2], [3, 4, 5]]})\n\ntry:\n    df.select(pl.col(\"a\").list.to_array(2))\nexcept Exception as e:\n    print(repr(e).split(\"(\")[0])\n\nfixed = df.select(pl.col(\"a\").list.head(2).list.to_array(2))\nprint(fixed.schema)\nprint(fixed.rows())\n",
+   "output": "ComputeError\nSchema({'a': Array(Int64, shape=(2,))})\n[([1, 2],), ([3, 4],)]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows the trailing element silently dropped with `upper_bound=2`, and the docstring confirms the 1.33.0 ground-truth behaviour and that `n_field_strategy` is deprecated.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows nulls first in both ascending and descending sorts, `list.first` returning null, and `nulls_last=True` fixing it.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `Expr.tail` changing the height to 2 and a string `n` being read as column `k` for per-row tails.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The signature defaults to `maintain_order=False`, the docstring says order is kept only when requested, and the output shows both suggested fixes working.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The docstring states the output is 0 when a row has no non-null elements, and the output shows the empty and all-null rows indistinguishable from a true zero.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstrings state `ddof=1` by default, and the output shows 5/3 versus 1.25.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "fix",
+   "reason": "The output only shows a list longer than `width` raising a ComputeError, so the claim that short lists are not padded is not demonstrated.",
+   "trap": "`Expr.list.to_array` converts to a fixed-width `pl.Array`, and `width` is required rather than inferred. It does not truncate lists that are longer than `width`. In the example, a length-3 list with `width=2` raises a `ComputeError` at execution time instead of returning an Array. Normalise the lengths first, for example with `Expr.list.head`, or check `Expr.list.len` before converting."
+  }
+ ]
+}

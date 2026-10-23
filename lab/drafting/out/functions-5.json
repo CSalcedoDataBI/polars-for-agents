@@ -1,0 +1,84 @@
+{
+ "chunk": "functions-5",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pl.zeros defaults to Float64, not an integer dtype",
+   "applies_to": [
+    "pl.zeros"
+   ],
+   "trap": "Habits from `[0] * n` or integer-typed code lead people to expect integer zeros. `pl.zeros` defaults to `dtype=Float64`, so you get `0.0` values, not integers. If you need integer zeros, pass the dtype explicitly, for example `pl.zeros(n, pl.Int32)`.",
+   "example": "import polars as pl\n\ns = pl.zeros(3, eager=True)\nprint(s.dtype, s.to_list())\n\ns_int = pl.zeros(3, pl.Int32, eager=True)\nprint(s_int.dtype, s_int.to_list())\n",
+   "output": "Float64 [0.0, 0.0, 0.0]\nInt32 [0, 0, 0]"
+  },
+  {
+   "title": "Adding pl.zeros to an integer column silently turns it into Float64",
+   "applies_to": [
+    "pl.zeros"
+   ],
+   "trap": "Because `pl.zeros` produces Float64 by default, an expression like `pl.col(\"a\") + pl.zeros(n)` promotes an integer column to Float64. No error is raised, but the schema changes for everything downstream, including joins, comparisons and writes. Pass a `dtype` that matches the column you combine it with.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3]})\n\nbad = df.with_columns(pl.col(\"a\") + pl.zeros(3))\ngood = df.with_columns(pl.col(\"a\") + pl.zeros(3, pl.Int64))\n\nprint(bad.schema[\"a\"])\nprint(good.schema[\"a\"])\n",
+   "output": "Float64\nInt64"
+  },
+  {
+   "title": "pl.zeros returns an Expr unless eager=True",
+   "applies_to": [
+    "pl.zeros"
+   ],
+   "trap": "The default is `eager=False`, so `pl.zeros(3)` returns a lazy `pl.Expr`, not data. Calling `Series` methods such as `Series.to_list` on it fails. Pass `eager=True` to get a `pl.Series`, or evaluate the expression with `pl.select`.",
+   "example": "import polars as pl\n\nz = pl.zeros(3)\nprint(isinstance(z, pl.Expr), isinstance(z, pl.Series))\ntry:\n    z.to_list()\nexcept AttributeError:\n    print(\"AttributeError\")\n\ns = pl.zeros(3, eager=True)\nprint(isinstance(s, pl.Series), s.to_list())\n\nprint(pl.select(pl.zeros(3)).to_series().to_list())\n",
+   "output": "True False\nAttributeError\nTrue [0.0, 0.0, 0.0]\n[0.0, 0.0, 0.0]"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "A fixed n must equal the frame height; use pl.lit to broadcast",
+    "applies_to": [
+     "pl.zeros",
+     "pl.lit"
+    ],
+    "trap": "`pl.zeros(n)` builds a column of exactly `n` rows. If `n` differs from the height of the frame you add it to, `DataFrame.with_columns` raises an error instead of broadcasting. Hard-coding `n` also breaks as soon as the data size changes. Use `pl.lit` when you do not need a predetermined length, because a scalar literal broadcasts to the frame height.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3, 4]})\n\ntry:\n    df.with_columns(pl.zeros(3).alias(\"z\"))\n    print(\"no error\")\nexcept Exception:\n    print(\"raised an error\")\n\ngood = df.with_columns(pl.lit(0.0).alias(\"z\"))\nprint(good)\n"
+   },
+   "problems": [
+    "example failed: UnicodeEncodeError: 'charmap' codec can't encode characters in position 15-27: character maps to <undefined>"
+   ]
+  },
+  {
+   "note": {
+    "title": "The output column is named zeros, so it neither replaces your column nor coexists with a second zeros",
+    "applies_to": [
+     "pl.zeros",
+     "DataFrame.with_columns"
+    ],
+    "trap": "The result of `pl.zeros` is named `zeros`. Putting it in `DataFrame.with_columns` adds a new column called `zeros` and leaves your existing column untouched. Two unaliased `pl.zeros` calls in one `DataFrame.with_columns` produce duplicate output names and raise an error. Always use `Expr.alias` to name the target column.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 2]})\n\nout = df.with_columns(pl.zeros(2))\nprint(out.columns)\n\ntry:\n    df.with_columns(pl.zeros(2), pl.zeros(2, pl.Int64))\n    print(\"no error\")\nexcept Exception:\n    print(\"raised an error\")\n\nfixed = df.with_columns(pl.zeros(2, pl.Int64).alias(\"x\"))\nprint(fixed)\n"
+   },
+   "problems": [
+    "example failed: UnicodeEncodeError: 'charmap' codec can't encode characters in position 15-21: character maps to <undefined>"
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The Float64 default is real, but `np.zeros` also defaults to float64, so citing it as the source of an integer expectation is a misstatement.",
+   "trap": "Habits from `[0] * n` or integer-typed code lead people to expect integer zeros. `pl.zeros` defaults to `dtype=Float64`, so you get `0.0` values, not integers. If you need integer zeros, pass the dtype explicitly, for example `pl.zeros(n, pl.Int32)`."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows the integer column silently becoming Float64 with the default dtype and staying Int64 when the dtype is matched.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output confirms that `pl.zeros(3)` is an Expr that raises AttributeError on `to_list`, and that both `eager=True` and `pl.select` produce data.",
+   "trap": ""
+  }
+ ]
+}

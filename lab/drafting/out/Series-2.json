@@ -1,0 +1,136 @@
+{
+ "chunk": "Series-2",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Series.count counts NaN as a valid value; only nulls are excluded",
+   "applies_to": [
+    "Series.count",
+    "Series.len",
+    "Series.fill_nan"
+   ],
+   "trap": "`Series.count` returns the number of non-null elements. A floating-point NaN is not null in Polars, so it is counted. pandas users expect `count()` to skip NaN, so they get a larger number than they expect. Use `Series.len` for the total length. To count only real numbers, first convert NaN to null with `Series.fill_nan(None)`, then call `Series.count`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1.0, None, float(\"nan\")])\nprint(\"len:\", s.len())\nprint(\"count (NaN counted):\", s.count())\nprint(\"count excluding NaN:\", s.fill_nan(None).count())\n",
+   "output": "len: 3\ncount (NaN counted): 2\ncount excluding NaN: 1"
+  },
+  {
+   "title": "drop_nulls keeps NaN and drop_nans keeps null",
+   "applies_to": [
+    "Series.drop_nulls",
+    "Series.drop_nans"
+   ],
+   "trap": "In Polars, null (missing) and NaN (a float value) are different things. `Series.drop_nulls` leaves NaN in place, and `Series.drop_nans` leaves nulls in place. pandas `dropna` removes both, so translating it to one of these methods leaves bad values behind. Chain both calls when you want to remove both kinds.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1.0, None, 3.0, float(\"nan\")])\nprint(\"drop_nulls:\", s.drop_nulls().to_list())\nprint(\"drop_nans:\", s.drop_nans().to_list())\nprint(\"both:\", s.drop_nulls().drop_nans().to_list())\n",
+   "output": "drop_nulls: [1.0, 3.0, nan]\ndrop_nans: [1.0, None, 3.0]\nboth: [1.0, 3.0]"
+  },
+  {
+   "title": "Use eq_missing when null should compare equal to null",
+   "applies_to": [
+    "Series.eq",
+    "Series.eq_missing"
+   ],
+   "trap": "`Series.eq` (and `==`) propagates nulls. Comparing null with null gives null, not `True`. If you use that mask as a filter, the null rows are silently dropped. Use `Series.eq_missing` when two missing values should count as a match. It always returns a non-null boolean.",
+   "example": "import polars as pl\n\ns1 = pl.Series(\"a\", [333, 200, None])\ns2 = pl.Series(\"a\", [100, 200, None])\nprint(\"eq:\", s1.eq(s2).to_list())\nprint(\"eq_missing:\", s1.eq_missing(s2).to_list())\nprint(\"matches via eq:\", s1.filter(s1.eq(s2)).len())\nprint(\"matches via eq_missing:\", s1.filter(s1.eq_missing(s2)).len())\n",
+   "output": "eq: [False, True, None]\neq_missing: [False, True, True]\nmatches via eq: 1\nmatches via eq_missing: 2"
+  },
+  {
+   "title": "Series.equals ignores names and dtypes by default",
+   "applies_to": [
+    "Series.equals"
+   ],
+   "trap": "`Series.equals` defaults to `check_dtypes=False`, `check_names=False` and `null_equal=True`. Two Series with different names and different integer dtypes can therefore compare as equal. If you use it as a strict test, pass `check_dtypes=True` and `check_names=True`. Note that the old `strict` parameter was renamed `check_dtypes`. Pass `null_equal=False` if nulls should make the comparison fail.",
+   "example": "import polars as pl\n\na = pl.Series(\"a\", [1, 2, None])\nb = pl.Series(\"b\", [1, 2, None], dtype=pl.Int32)\nprint(\"default:\", a.equals(b))\nprint(\"strict:\", a.equals(b, check_dtypes=True, check_names=True))\nprint(\"null_equal=False:\", a.equals(b, null_equal=False))\n",
+   "output": "default: True\nstrict: False\nnull_equal=False: False"
+  },
+  {
+   "title": "Series.extend mutates the original Series in place",
+   "applies_to": [
+    "Series.extend",
+    "Series.clone"
+   ],
+   "trap": "`Series.extend` appends the other Series' data into this Series' own memory. It modifies the Series in place and returns it only for convenience. Writing `b = a.extend(other)` therefore also changes `a`, which breaks the pandas habit that methods return new objects. Call `Series.clone` first, or use `pl.concat`, if `a` must stay unchanged.",
+   "example": "import polars as pl\n\na = pl.Series(\"a\", [1, 2, 3])\nb = a.extend(pl.Series(\"b\", [4, 5]))\nprint(\"a after extend:\", a.to_list())\nprint(\"b is a:\", b is a)\n\nc = pl.Series(\"c\", [1, 2, 3])\nd = c.clone().extend(pl.Series(\"x\", [4, 5]))\nprint(\"c untouched:\", c.to_list(), \"d:\", d.to_list())\ne = pl.concat([c, pl.Series(\"c\", [9])])\nprint(\"c untouched:\", c.to_list(), \"e:\", e.to_list())\n",
+   "output": "a after extend: [1, 2, 3, 4, 5]\nb is a: True\nc untouched: [1, 2, 3] d: [1, 2, 3, 4, 5]\nc untouched: [1, 2, 3] e: [1, 2, 3, 9]"
+  },
+  {
+   "title": "Series.cut bins are right-closed by default and labels need len(breaks)+1 entries",
+   "applies_to": [
+    "Series.cut"
+   ],
+   "trap": "`Series.cut` (unstable) uses right-closed intervals by default, so a value exactly equal to a break falls into the lower bin. Pass `left_closed=True` to make bins left-closed. `labels` must have exactly one more entry than `breaks`; a mismatch raises an error. The result is `Categorical`, or a `Struct` if `include_breaks=True`, not a string column.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [-1, 0, 1, 2])\nprint(s.cut([0, 1]).cast(pl.String).to_list())\nprint(s.cut([0, 1], left_closed=True).cast(pl.String).to_list())\nprint(s.cut([0, 1]).dtype)\ntry:\n    s.cut([0, 1], labels=[\"lo\", \"hi\"])\nexcept Exception as e:\n    print(type(e))\nprint(s.cut([0, 1], labels=[\"lo\", \"mid\", \"hi\"]).cast(pl.String).to_list())\n",
+   "output": "['(-inf, 0]', '(-inf, 0]', '(0, 1]', '(1, inf]']\n['[-inf, 0)', '[0, 1)', '[1, inf)', '[1, inf)']\nCategorical\n<class 'polars.exceptions.ShapeError'>\n['lo', 'lo', 'mid', 'hi']"
+  },
+  {
+   "title": "Series.cum_count counts non-null values; it is not a row number",
+   "applies_to": [
+    "Series.cum_count",
+    "DataFrame.with_row_index"
+   ],
+   "trap": "`Series.cum_count` returns the running count of non-null values, starting at 1. When it hits a null, the count stays flat. Do not use it as a 0-based row index that counts every row. For row positions, use `DataFrame.with_row_index`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"s\", [\"x\", \"k\", None, \"d\"])\nprint(\"cum_count:\", s.cum_count().to_list())\nrow = s.to_frame().with_row_index(\"row\").get_column(\"row\")\nprint(\"row index:\", row.to_list())\n",
+   "output": "cum_count: [1, 2, 2, 3]\nrow index: [0, 1, 2, 3]"
+  },
+  {
+   "title": "Series.describe uses nearest-rank percentiles by default, not linear interpolation",
+   "applies_to": [
+    "Series.describe"
+   ],
+   "trap": "`Series.describe` defaults to `interpolation='nearest'`, so its 25%/50%/75% rows are picked from actual data points. If you expect linearly interpolated percentiles, the numbers can differ. Pass `interpolation=\"linear\"` to get interpolated percentiles. The output is a two-column DataFrame (`statistic`, `value`), not an indexed Series.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, 3, 4])\npct = pl.col(\"statistic\").str.ends_with(\"%\")\nprint(s.describe().columns)\nprint(\"nearest:\", s.describe().filter(pct).rows())\nprint(\"linear:\", s.describe(interpolation=\"linear\").filter(pct).rows())\n",
+   "output": "['statistic', 'value']\nnearest: [('25%', 2.0), ('50%', 3.0), ('75%', 3.0)]\nlinear: [('25%', 1.75), ('50%', 2.5), ('75%', 3.25)]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows len 3, count 2 with NaN counted, and 1 after fill_nan(None), matching every claim.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows drop_nulls keeping nan, drop_nans keeping None, and chaining both removing both kinds.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows eq giving None for null-vs-null, the filter dropping that row (1 match), and eq_missing returning True (2 matches).",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The defaults and the strict-to-check_dtypes rename come from the docstring, and the output confirms True by default and False with stricter flags or null_equal=False.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows a mutated and b is a, while clone and concat leave the original untouched, matching the docstring warning about in-place modification.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output confirms right-closed default bins, left_closed behavior, the Categorical dtype and a ShapeError on a label-count mismatch, and the docstring covers the Struct dtype and the labels-count rule.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows cum_count [1, 2, 2, 3] staying flat at the null versus the 0-based row index [0, 1, 2, 3].",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The docstring default interpolation='nearest' and the output's differing nearest versus linear percentiles plus the statistic/value columns support all claims.",
+   "trap": ""
+  }
+ ]
+}

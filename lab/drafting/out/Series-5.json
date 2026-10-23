@@ -1,0 +1,129 @@
+{
+ "chunk": "Series-5",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "rank keeps nulls as null and defaults to average ranks",
+   "applies_to": [
+    "Series.rank"
+   ],
+   "trap": "SQL users often expect nulls to be ranked last. `Series.rank` only ranks non-null values and leaves nulls as null. The default `method='average'` gives fractional Float64 ranks for ties. Pass `method='dense'` or `'ordinal'` to get integer ranks. If nulls need a rank, fill them with `Series.fill_null` before ranking.",
+   "example": "import polars as pl\n\ns = pl.Series([3, None, 1, 1])\n\n# default 'average': float ranks, null stays null\nprint(s.rank().dtype, s.rank().to_list())\n\n# integer ranks\nprint(s.rank(\"dense\").to_list())\nprint(s.rank(\"ordinal\").to_list())\n\n# rank nulls as the largest value by filling them first\nfilled = s.fill_null(s.max() + 1)\nprint(filled.rank(\"dense\").to_list())\n",
+   "output": "Float64 [3.0, None, 1.5, 1.5]\n[2, None, 1, 1]\n[3, None, 1, 2]\n[2, 3, 1, 1]"
+  },
+  {
+   "title": "Fixed-size rolling windows need min_samples to tolerate nulls",
+   "applies_to": [
+    "Series.rolling_mean",
+    "Series.rolling_sum",
+    "Series.rolling_min",
+    "Series.rolling_max",
+    "Series.rolling_std",
+    "Series.rolling_median"
+   ],
+   "trap": "For the fixed-size `rolling_*` methods, `min_samples=None` means `min_samples = window_size`. The first `window_size - 1` rows are null, and so is every window that contains a null. The window trails: it is the row itself plus the previous `window_size - 1` rows, unless you pass `center=True`. The parameter was renamed from `min_periods` to `min_samples` in 1.21.0, so pass `min_samples`.",
+   "example": "import polars as pl\n\ns = pl.Series([1.0, None, 3.0, 4.0, 5.0])\n\n# default: a single null nulls out every window that contains it\nprint(s.rolling_mean(window_size=2).to_list())\n\n# require only 1 non-null value per window\nprint(s.rolling_mean(window_size=2, min_samples=1).to_list())\n\n# centered window instead of trailing\nprint(s.rolling_sum(window_size=3, min_samples=1, center=True).to_list())\n",
+   "output": "[None, None, None, 3.5, 4.5]\n[1.0, 1.0, 3.0, 3.5, 4.5]\n[1.0, 4.0, 7.0, 12.0, 9.0]"
+  },
+  {
+   "title": "rolling_*_by windows are right-closed and use min_samples=1 by default",
+   "applies_to": [
+    "Series.rolling_sum_by",
+    "Series.rolling_mean_by",
+    "Series.rolling_max_by",
+    "Series.rolling_min_by",
+    "Series.rolling_median_by",
+    "Series.rolling_std_by",
+    "Series.rolling_quantile_by",
+    "Series.rolling_rank_by"
+   ],
+   "trap": "The temporal `rolling_*_by` methods default to `closed='right'`, so the window is `(t - window_size, t]`. A `\"2d\"` window therefore excludes the value exactly two days earlier. Unlike the fixed-size `rolling_*` methods, `min_samples` defaults to `1`, so the first rows are not null. Pass `closed='both'` for an inclusive start. Integer `by` columns need an `'i'` window such as `\"2i\"`. These methods are marked unstable.",
+   "example": "import polars as pl\nfrom datetime import date\n\nd = pl.Series(\"d\", [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)])\nv = pl.Series(\"v\", [1, 2, 3])\n\n# default closed='right': (t - 2d, t]\nprint(v.rolling_sum_by(d, \"2d\").to_list())\n\n# inclusive on both ends: [t - 2d, t]\nprint(v.rolling_sum_by(d, \"2d\", closed=\"both\").to_list())\n",
+   "output": "[1, 3, 5]\n[1, 3, 6]"
+  },
+  {
+   "title": "quantile defaults to nearest interpolation, not linear",
+   "applies_to": [
+    "Series.quantile",
+    "Series.rolling_quantile"
+   ],
+   "trap": "`Series.quantile` defaults to `interpolation='nearest'`, while pandas and numpy default to linear. Results can therefore silently differ from pandas/numpy or from `Series.median`. Pass `interpolation='linear'` to match them. `Series.rolling_quantile` also defaults to `'nearest'`, and its `window_size` defaults to `2`, so always pass `window_size` explicitly.",
+   "example": "import polars as pl\n\ns = pl.Series([1.0, 2.0, 3.0, 4.0])\n\nprint(s.quantile(0.5))                          # nearest (default)\nprint(s.quantile(0.5, interpolation=\"linear\"))  # 2.5, like pandas\nprint(s.median())\n\n# rolling_quantile: window_size silently defaults to 2\nprint(s.rolling_quantile(0.5).to_list())\nprint(s.rolling_quantile(0.5, interpolation=\"linear\", window_size=3).to_list())\n",
+   "output": "3.0\n2.5\n2.5\n[None, 2.0, 3.0, 4.0]\n[None, None, 2.0, 3.0]"
+  },
+  {
+   "title": "product of an empty or all-null Series is 1, not None",
+   "applies_to": [
+    "Series.product"
+   ],
+   "trap": "`Series.product` returns `1` when there are no non-null values, so missing data can silently look like a real product. If an empty product should be `None`, guard it with `Series.count`, as the docstring suggests: `s.product() if s.count() else None`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [None, None], dtype=pl.Int64)\n\nprint(s.product())                         # 1\nprint(s.product() if s.count() else None)  # None\n",
+   "output": "1\nNone"
+  },
+  {
+   "title": "Use replace_strict, not replace, when you need a default or a new dtype",
+   "applies_to": [
+    "Series.replace",
+    "Series.replace_strict"
+   ],
+   "trap": "`Series.replace` leaves unmatched values unchanged and keeps the original data type. Its `default` and `return_dtype` parameters are deprecated. To send unmatched values to a default, or to change the dtype, use `Series.replace_strict`. Without `default`, `Series.replace_strict` raises `InvalidOperationError` if any non-null value is not matched, so pass `default=None` to get nulls instead.",
+   "example": "import polars as pl\n\ns = pl.Series([1, 2, 3])\nmapping = {1: 10, 2: 20}\n\n# replace keeps unmatched values as they are\nprint(s.replace(mapping).to_list())\n\n# replace_strict raises on unmatched values when no default is given\ntry:\n    s.replace_strict(mapping)\nexcept Exception as e:\n    print(type(e))\n\n# explicit default: unmatched values become null\nprint(s.replace_strict(mapping, default=None).to_list())\n\n# replace_strict can change the dtype\nlabels = s.replace_strict({1: \"one\", 2: \"two\"}, default=\"other\")\nprint(labels.dtype, labels.to_list())\n",
+   "output": "[10, 20, 3]\n<class 'polars.exceptions.InvalidOperationError'>\n[10, 20, None]\nString ['one', 'two', 'other']"
+  },
+  {
+   "title": "qcut raises DuplicateError on repeated breakpoints and is right-closed",
+   "applies_to": [
+    "Series.qcut"
+   ],
+   "trap": "`Series.qcut` raises `DuplicateError` when quantiles land on the same value, which is common with skewed or discrete data, even if the probabilities are unique. Pass `allow_duplicates=True` to drop the duplicate breakpoints. Intervals are right-closed by default; use `left_closed=True` for left-closed intervals. `labels` must have exactly one more entry than the number of cut points. The result is `Categorical`, or `Struct` with `include_breaks=True`, and the API is unstable.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [1, 1, 1, 1, 2])\n\ntry:\n    s.qcut([0.25, 0.5])\nexcept Exception as e:\n    print(type(e))\n\nbinned = s.qcut([0.25, 0.5], allow_duplicates=True)\nprint(binned.dtype, binned.to_list())\n\nt = pl.Series(\"t\", [-2, -1, 0, 1, 2])\nprint(t.qcut(2, labels=[\"low\", \"high\"]).to_list())\nprint(t.qcut(2, labels=[\"low\", \"high\"], left_closed=True).to_list())\n",
+   "output": "<class 'polars.exceptions.DuplicateError'>\nCategorical ['(-inf, 1]', '(-inf, 1]', '(-inf, 1]', '(-inf, 1]', '(1, inf]']\n['low', 'low', 'low', 'high', 'high']\n['low', 'low', 'high', 'high', 'high']"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "Integer ranks are only shown for 'dense' and 'ordinal' (and 'ordinal' as u32 in the docstring); nothing here shows 'min' producing integers.",
+   "trap": "SQL users often expect nulls to be ranked last. `Series.rank` only ranks non-null values and leaves nulls as null. The default `method='average'` gives fractional Float64 ranks for ties. Pass `method='dense'` or `'ordinal'` to get integer ranks. If nulls need a rank, fill them with `Series.fill_null` before ranking."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output and docstrings support the default `min_samples`, null propagation, trailing versus centered windows, and the 1.21.0 rename.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output and signatures confirm `closed='right'` excluding the boundary value, the `min_samples=1` default, the `'i'` requirement and the unstable status.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows `'nearest'` giving 3.0 versus 2.5 for linear and median, and the signature confirms the `rolling_quantile` defaults of `'nearest'` and `window_size=2`.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output and the docstring Notes confirm `1` for no non-null values and the `count` guard.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm `replace` keeps unmatched values, its deprecated parameters, and `replace_strict` raising without a default and changing dtype.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows `DuplicateError`, `allow_duplicates`, and right-closed versus `left_closed` behavior, and the docstring supports the label count, return dtypes and unstable status.",
+   "trap": ""
+  }
+ ]
+}

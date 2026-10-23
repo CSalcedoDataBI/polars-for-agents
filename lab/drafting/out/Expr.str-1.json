@@ -1,0 +1,145 @@
+{
+ "chunk": "Expr.str-1",
+ "group": "Expr.str",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.str.contains treats the pattern as a regex unless literal=True",
+   "applies_to": [
+    "Expr.str.contains"
+   ],
+   "trap": "`Expr.str.contains` compiles `pattern` as a regex by default, like pandas `str.contains(regex=True)`. Metacharacters in a plain search term change its meaning. For example, `\"1.2\"` also matches `\"112\"` and `\"1+2\"` because `.` matches any character. A pattern that is not a valid regex, such as `\"1+(\"`, raises an error with the default `strict=True` and turns every row into null with `strict=False`. When you mean a plain substring, pass `literal=True`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"ver\": [\"1.2\", \"112\", \"1+2\"]})\nout = df.select(\n    regex=pl.col(\"ver\").str.contains(\"1.2\"),\n    literal=pl.col(\"ver\").str.contains(\"1.2\", literal=True),\n)\nprint(out.to_dict(as_series=False))\n\ntry:\n    df.select(pl.col(\"ver\").str.contains(\"1+(\"))\n    print(\"no error\")\nexcept Exception:\n    print(\"invalid regex raised an error\")\n\nlenient = df.select(pl.col(\"ver\").str.contains(\"1+(\", strict=False))\nprint(lenient.to_series().to_list())\nplain = df.select(pl.col(\"ver\").str.contains(\"1+(\", literal=True))\nprint(plain.to_series().to_list())",
+   "output": "{'regex': [True, True, True], 'literal': [True, False, False]}\ninvalid regex raised an error\n[None, None, None]\n[False, False, False]"
+  },
+  {
+   "title": "Expr.str.replace changes only the first match, unlike pandas",
+   "applies_to": [
+    "Expr.str.replace",
+    "Expr.str.replace_all"
+   ],
+   "trap": "pandas `str.replace` replaces every occurrence. `Expr.str.replace` defaults to `n=1` and replaces only the first match, so the other occurrences are silently left in place. Use `Expr.str.replace_all` to replace every match. Both methods treat `pattern` as a regex unless `literal=True`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"d\": [\"2024-01-15\", \"1999-12-31\"]})\nout = df.select(\n    first_only=pl.col(\"d\").str.replace(\"-\", \"/\"),\n    every=pl.col(\"d\").str.replace_all(\"-\", \"/\"),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "{'first_only': ['2024/01-15', '1999/12-31'], 'every': ['2024/01/15', '1999/12/31']}"
+  },
+  {
+   "title": "Use Expr.str.join instead of the deprecated Expr.str.concat, and note its empty default delimiter",
+   "applies_to": [
+    "Expr.str.concat",
+    "Expr.str.join"
+   ],
+   "trap": "`Expr.str.concat` is deprecated; use `Expr.str.join` instead. The default `delimiter` changed from a hyphen to an empty string, so a straight rename glues the values together. Both methods collapse the whole column into a single value. With the default `ignore_nulls=True`, they also silently drop nulls. Pass `ignore_nulls=False` if a null anywhere should make the result null.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"tag\": [\"a\", None, \"c\"]})\nprint(df.select(pl.col(\"tag\").str.join()).to_series().to_list())\nprint(df.select(pl.col(\"tag\").str.join(\"-\")).to_series().to_list())\nout = df.select(pl.col(\"tag\").str.join(\"-\", ignore_nulls=False))\nprint(out.to_series().to_list())",
+   "output": "['ac']\n['a-c']\n[None]"
+  },
+  {
+   "title": "Expr.str.len_bytes counts bytes, not characters",
+   "applies_to": [
+    "Expr.str.len_bytes",
+    "Expr.str.len_chars"
+   ],
+   "trap": "pandas `str.len` counts characters; in Polars that is `Expr.str.len_chars`. `Expr.str.len_bytes` is faster, but it returns the UTF-8 byte length. That length differs as soon as the text contains non-ASCII characters, so length filters built on it silently keep the wrong rows. Use `Expr.str.len_bytes` only when the data is known to be ASCII.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"name\": [\"Zo\\u00eb\", \"Bob\", \"\\u6771\\u4eac\"]})\nout = df.select(\n    n_bytes=pl.col(\"name\").str.len_bytes(),\n    n_chars=pl.col(\"name\").str.len_chars(),\n)\nprint(out.to_dict(as_series=False))\nby_bytes = df.filter(pl.col(\"name\").str.len_bytes() == 3)\nby_chars = df.filter(pl.col(\"name\").str.len_chars() == 3)\nprint(ascii(by_bytes.to_series().to_list()))\nprint(ascii(by_chars.to_series().to_list()))",
+   "output": "{'n_bytes': [4, 3, 6], 'n_chars': [3, 3, 2]}\n['Bob']\n['Zo\\xeb', 'Bob']"
+  },
+  {
+   "title": "Expr.str.find returns a byte offset, or null when not found",
+   "applies_to": [
+    "Expr.str.find",
+    "Expr.str.slice"
+   ],
+   "trap": "`Expr.str.find` returns the byte offset of the first match, and null when there is no match. It does not return a character index or -1 as pandas does. `Expr.str.slice` counts characters, so feeding it the result of `Expr.str.find` gives off-by-N substrings on non-ASCII text. `Expr.str.find` also treats the pattern as a regex unless `literal=True`. To cut at a delimiter, use `Expr.str.extract` or a split instead of combining find and slice.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"caf\\u00e9: 5\", \"cafe: 5\", \"none\"]})\npos = pl.col(\"s\").str.find(\":\", literal=True)\nout = df.select(\n    pos=pos,\n    wrong_key=pl.col(\"s\").str.slice(0, pos),\n    right_key=pl.col(\"s\").str.extract(r\"^([^:]*):\", 1),\n)\nprint(ascii(out.to_dict(as_series=False)))",
+   "output": "{'pos': [5, 4, None], 'wrong_key': ['caf\\xe9:', 'cafe', 'none'], 'right_key': ['caf\\xe9', 'cafe', None]}"
+  },
+  {
+   "title": "Expr.str.strip_chars strips a set of characters, not a prefix or suffix",
+   "applies_to": [
+    "Expr.str.strip_chars",
+    "Expr.str.strip_chars_end",
+    "Expr.str.strip_suffix"
+   ],
+   "trap": "`Expr.str.strip_chars` and `Expr.str.strip_chars_end` treat `characters` as an unordered set of characters. Every leading or trailing character in that set is removed, so stripping `\".csv\"` can eat into the file name itself. To remove an exact string, use `Expr.str.strip_suffix` or `Expr.str.strip_prefix`. Also, once you pass `characters`, whitespace is no longer stripped unless you include it in the set.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"f\": [\"report.csv\", \"docs.csv\", \"vcs.csv\", \"data.csv \"]})\nout = df.select(\n    as_set=pl.col(\"f\").str.strip_chars_end(\".csv\"),\n    as_suffix=pl.col(\"f\").str.strip_suffix(\".csv\"),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "{'as_set': ['report', 'do', '', 'data.csv '], 'as_suffix': ['report', 'docs', 'vcs', 'data.csv ']}"
+  },
+  {
+   "title": "Expr.str.split_exact and Expr.str.splitn return structs and use n differently",
+   "applies_to": [
+    "Expr.str.split_exact",
+    "Expr.str.splitn",
+    "Expr.str.split"
+   ],
+   "trap": "Both methods return a `Struct`, not a list; use `Expr.str.split` if you want a list. In `Expr.str.split_exact`, `n` is the number of splits, giving n+1 fields, and anything after the n-th split is not kept in any field. In `Expr.str.splitn`, `n` is the maximum number of items, and the last field holds the remainder. pandas `str.split(n=1)` therefore corresponds to `Expr.str.splitn(by, 2)`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"a_b_c\", \"d\"]})\nexact = df.select(pl.col(\"s\").str.split_exact(\"_\", 1)).unnest(\"s\")\nprint(exact.to_dict(as_series=False))\nn1 = df.select(pl.col(\"s\").str.splitn(\"_\", 1)).unnest(\"s\")\nprint(n1.to_dict(as_series=False))\nn2 = df.select(pl.col(\"s\").str.splitn(\"_\", 2)).unnest(\"s\")\nprint(n2.to_dict(as_series=False))\nprint(df.select(pl.col(\"s\").str.split(\"_\")).to_series().to_list())",
+   "output": "{'field_0': ['a', 'd'], 'field_1': ['b', None]}\n{'field_0': ['a_b_c', 'd']}\n{'field_0': ['a', 'd'], 'field_1': ['b_c', None]}\n[['a', 'b', 'c'], ['d']]"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "A dollar sign in the replacement value is a capture-group reference",
+    "applies_to": [
+     "Expr.str.replace",
+     "Expr.str.replace_all"
+    ],
+    "trap": "In regex mode, `$name` or `$1` inside `value` refers to a capture group. If that group does not exist, it expands to an empty string, so the text you meant to insert silently disappears. To get a literal `$`, write it as `$$`. Alternatively, pass `literal=True` when you do not need a regex pattern.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"t\": [\"5 dollars\", \"7 dollars\"]})\nout = df.select(\n    wrong=pl.col(\"t\").str.replace(\"dollars\", \"$US\"),\n    escaped=pl.col(\"t\").str.replace(\"dollars\", \"$$US\"),\n    literal=pl.col(\"t\").str.replace(\"dollars\", \"$US\", literal=True),\n)\nprint(out.to_dict(as_series=False))",
+    "output": "{'wrong': ['5 $US', '7 $US'], 'escaped': ['5 $$US', '7 $$US'], 'literal': ['5 $US', '7 $US']}"
+   },
+   "problems": [
+    "verify: dropped - The output contradicts the note: `$US` was inserted intact rather than vanishing, and the suggested `$$US` escape produced a literal `$$US`."
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The output only shows `.` over-matching and `(` making the regex invalid, so saying `+`, `$` and `(` all silently match too much is a misstatement.",
+   "trap": "`Expr.str.contains` compiles `pattern` as a regex by default, like pandas `str.contains(regex=True)`. Metacharacters in a plain search term change its meaning. For example, `\"1.2\"` also matches `\"112\"` and `\"1+2\"` because `.` matches any character. A pattern that is not a valid regex, such as `\"1+(\"`, raises an error with the default `strict=True` and turns every row into null with `strict=False`. When you mean a plain substring, pass `literal=True`."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output and the `n=1` default in the signature confirm that only the first match is replaced, while `Expr.str.replace_all` replaces every match.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "drop",
+   "reason": "The output contradicts the note: `$US` was inserted intact rather than vanishing, and the suggested `$$US` escape produced a literal `$$US`.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The deprecation message, the empty default delimiter and the null handling are all confirmed by the docstrings and the output.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows the byte and character counts differ for non-ASCII text and that the two filters keep different rows, as the note says.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstrings and output confirm that `Expr.str.find` returns a byte offset or null and that `Expr.str.slice` counts characters, which produces the off-by-one key `café:`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows the set semantics turning names into `do` and an empty string, and the docstrings confirm that whitespace is not stripped once `characters` is passed.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output confirms the struct results, that `split_exact` drops the remainder after `n` splits, and that `splitn` treats `n` as a maximum item count with the remainder kept in the last field.",
+   "trap": ""
+  }
+ ]
+}

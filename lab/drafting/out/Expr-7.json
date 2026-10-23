@@ -1,0 +1,119 @@
+{
+ "chunk": "Expr-7",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.unique does not keep first-appearance order by default",
+   "applies_to": [
+    "Expr.unique"
+   ],
+   "trap": "`Expr.unique` defaults to `maintain_order=False`, so the order of the unique values is not guaranteed. This differs from pandas `unique()`, which keeps order of appearance. Code that pairs the result with another ordered list, or takes the 'first' unique value, can silently give wrong results. Pass `maintain_order=True` when order matters, or sort the result explicitly.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [3, 1, 3, 2, 1]})\n\n# Default order is not guaranteed; do not rely on it.\n# Keep first-appearance order:\nordered = df.select(pl.col(\"a\").unique(maintain_order=True))\nprint(ordered[\"a\"].to_list())  # [3, 1, 2]\n\n# Or impose an explicit order:\nsorted_u = df.select(pl.col(\"a\").unique().sort())\nprint(sorted_u[\"a\"].to_list())  # [1, 2, 3]\n",
+   "output": "[3, 1, 2]\n[1, 2, 3]"
+  },
+  {
+   "title": "Expr.value_counts returns one Struct column in unspecified order",
+   "applies_to": [
+    "Expr.value_counts"
+   ],
+   "trap": "`Expr.value_counts` returns a single `Struct` column that pairs each value with its count, not two separate columns. Unnest it with `DataFrame.unnest` to get two columns. The default `sort=False` gives a non-deterministic row order, not most-frequent-first. The count field is named `count`, or `proportion` when `normalize=True`, unless you pass `name`. Use `sort=True` and `DataFrame.unnest` on the result.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"color\": [\"red\", \"blue\", \"red\", \"green\", \"blue\", \"blue\"]})\n\nvc = df.select(pl.col(\"color\").value_counts(sort=True))\nprint(vc.schema)  # a single Struct column, not two columns\n\nflat = vc.unnest(\"color\")\nprint(flat.columns)  # ['color', 'count']\nprint(flat.rows())  # [('blue', 3), ('red', 2), ('green', 1)]\n\nprops = df.select(\n    pl.col(\"color\").value_counts(sort=True, normalize=True)\n).unnest(\"color\")\nprint(props.columns)  # ['color', 'proportion']\n",
+   "output": "Schema({'color': Struct({'color': String, 'count': UInt32})})\n['color', 'count']\n[('blue', 3), ('red', 2), ('green', 1)]\n['color', 'proportion']"
+  },
+  {
+   "title": "Expr.where is a deprecated alias of filter, not a length-preserving mask",
+   "applies_to": [
+    "Expr.where",
+    "Expr.filter",
+    "pl.when"
+   ],
+   "trap": "`Expr.where` is deprecated since 0.20.4 and is only an alias for `Expr.filter`. It drops the rows that fail the predicate, so the result is shorter. pandas' where method instead keeps the length and masks the failing values. To filter, call `Expr.filter`. To mask while keeping every row, use `pl.when`, which yields null where the condition is false unless you supply an otherwise value, or use `Series.zip_with` on a Series.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"b\": [1, 2, 3]})\n\n# where behaves exactly like filter: rows are dropped\nw = df.select(pl.col(\"b\").where(pl.col(\"b\") >= 2))[\"b\"].to_list()\nf = df.select(pl.col(\"b\").filter(pl.col(\"b\") >= 2))[\"b\"].to_list()\nprint(w, f)  # [2, 3] [2, 3]\n\n# masking keeps the original length\ns = df[\"b\"]\nmasked = s.zip_with(s >= 2, pl.Series([None, None, None], dtype=pl.Int64))\nprint(masked.to_list())  # [None, 2, 3]\n",
+   "output": "[2, 3] [2, 3]\n[None, 2, 3]"
+  },
+  {
+   "title": "Expr.var defaults to sample variance with ddof=1",
+   "applies_to": [
+    "Expr.var"
+   ],
+   "trap": "`Expr.var` divides by `N - ddof`, and `ddof` defaults to 1, which gives the sample variance. NumPy's default is the population variance (`ddof=0`). Code ported from NumPy therefore returns different numbers without any error. Pass `ddof=0` explicitly when you want the population variance.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [-1, 0, 1]})\n\nout = df.select(\n    pl.col(\"a\").var().alias(\"sample_ddof1\"),\n    pl.col(\"a\").var(ddof=0).alias(\"population_ddof0\"),\n)\nprint(out.columns)\nprint(out.row(0))  # (1.0, 0.6666666666666666)\n",
+   "output": "['sample_ddof1', 'population_ddof0']\n(1.0, 0.6666666666666666)"
+  },
+  {
+   "title": "The ^ operator is bitwise xor on integers, not exponentiation",
+   "applies_to": [
+    "Expr.xor",
+    "Expr.pow"
+   ],
+   "trap": "`expr ^ other` maps to `Expr.xor`, and on integer columns it is a bitwise exclusive-or. It is logical only on booleans. Writing `pl.col(\"x\") ^ 2` to square a column, as in Excel or R, silently returns wrong numbers. Use `Expr.pow` or `**` for powers.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [2, 3, 10]})\n\nout = df.select(\n    (pl.col(\"x\") ^ 2).alias(\"xor_wrong\"),\n    pl.col(\"x\").pow(2).alias(\"pow\"),\n    (pl.col(\"x\") ** 2).alias(\"pow_op\"),\n)\nprint(out.to_dict(as_series=False))\n# xor_wrong: [0, 1, 8]; pow: [4, 9, 100]\n\nb = pl.DataFrame({\"p\": [True, False], \"q\": [True, True]})\nprint(b.select(pl.col(\"p\").xor(pl.col(\"q\")))[\"p\"].to_list())  # [False, True]\n",
+   "output": "{'xor_wrong': [0, 1, 8], 'pow': [4, 9, 100], 'pow_op': [4, 9, 100]}\n[False, True]"
+  },
+  {
+   "title": "Expr.unique_counts gives counts only, aligned to first appearance",
+   "applies_to": [
+    "Expr.unique_counts",
+    "Expr.unique"
+   ],
+   "trap": "`Expr.unique_counts` returns only the counts, without the values, ordered by first appearance. If you pair it with the default `Expr.unique()` (order not guaranteed), the counts can be attached to the wrong values. Pair it with `Expr.unique(maintain_order=True)`, or use `Expr.value_counts` when you need values and counts together.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [\"c\", \"a\", \"c\", \"b\", \"c\", \"a\"]})\n\nout = df.select(\n    pl.col(\"id\").unique(maintain_order=True),\n    pl.col(\"id\").unique_counts().alias(\"n\"),\n)\nprint(out.rows())  # [('c', 3), ('a', 2), ('b', 1)]\n",
+   "output": "[('c', 3), ('a', 2), ('b', 1)]"
+  },
+  {
+   "title": "Expr.upper_bound is the dtype maximum, not the data maximum",
+   "applies_to": [
+    "Expr.upper_bound"
+   ],
+   "trap": "`Expr.upper_bound` returns the highest value the column's dtype can represent, as a unit result. It does not compute the largest value in the data. Using it as a data maximum, for example to normalise or set an upper clip limit, gives wildly wrong numbers. Use `Expr.max` for the data maximum. The result of `Expr.upper_bound` also depends on the dtype.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3]})\n\nout = df.select(\n    pl.col(\"a\").max().alias(\"data_max\"),\n    pl.col(\"a\").upper_bound().alias(\"i64_bound\"),\n    pl.col(\"a\").cast(pl.Int8).upper_bound().alias(\"i8_bound\"),\n)\nprint(out.columns)\nprint(out.row(0))  # (3, 9223372036854775807, 127)\n",
+   "output": "['data_max', 'i64_bound', 'i8_bound']\n(3, 9223372036854775807, 127)"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The signature confirms the `maintain_order=False` default, the docstring example marks the default order as ignorable, and the output shows `maintain_order=True` gives first-appearance order.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The docstring and output confirm the single Struct column, the non-deterministic default order, and the `count`/`proportion` field names that `name` can override.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The docstring confirms deprecation since 0.20.4 and the alias to `filter`, the output shows rows dropped and length kept by `zip_with`, and the `pl.when` docs confirm the default `otherwise(None)`.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The docstring states the divisor is N - ddof with a default of 1, and the output shows 1.0 versus 0.667 for ddof=0.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The docstring maps `^` to bitwise xor, and the output shows [0, 1, 8] versus [4, 9, 100] for `pow`.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstring says counts only, in order of appearance, and the output shows correct pairing with `unique(maintain_order=True)`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The docstring says it returns a unit Series with the dtype maximum, and the output shows 3 versus the i64 and i8 bounds.",
+   "trap": ""
+  }
+ ]
+}

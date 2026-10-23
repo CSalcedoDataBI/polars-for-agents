@@ -19,9 +19,10 @@ rule: **an agent never reads a name that did not come from the engine.**
 
 | Piece | Source | Status |
 |---|---|---|
-| API catalogue (`pl.Expr` and its `.str`, `.dt`, `.list`, `.arr`, `.struct`, `.cat`, `.name` namespaces; `DataFrame`, `LazyFrame`, `Series`; top-level functions; selectors) | introspection of the installed `polars` package, pinned by version | planned |
-| Deprecated and unstable flags | the same introspection | planned |
-| Traps and examples | notes per group, every name checked against the catalogue | planned |
+| API catalogue (`pl.Expr` and its `.str`, `.dt`, `.list`, `.arr`, `.struct`, `.cat`, `.name` namespaces; `DataFrame`, `LazyFrame`, `Series`; top-level functions and classes; selectors) | `scripts/export_catalog.py`, introspection of the installed `polars` package, pinned by version in [`catalog/`](catalog/) | first export in review |
+| Deprecated and unstable flags, for the whole API and per parameter | the same introspection | first export in review |
+| Traps and examples | [`skills/polars-reference/notes/`](skills/polars-reference/notes/): drafted with Claude, every name checked against the catalogue, every example run on the pinned version with its real output | first drafts in review |
+| Name check | `scripts/catalog_names.py`, run by the required `Validate` check on every Markdown file under `skills/` | in review |
 | `polars-feedback` skill | report a wrong or missing entry as a public issue | planned |
 
 ## Not in scope

@@ -1,0 +1,139 @@
+{
+ "chunk": "Expr-4",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.max and Expr.min silently skip NaN; use Expr.nan_max / Expr.nan_min to propagate it",
+   "applies_to": [
+    "Expr.max",
+    "Expr.min",
+    "Expr.nan_max",
+    "Expr.nan_min"
+   ],
+   "trap": "Coming from numpy, you may expect `max` or `min` to return NaN when the data contains NaN. In Polars, `Expr.max` and `Expr.min` ignore NaN, so `[-1.0, NaN, 1.0]` gives `1.0` and `-1.0`, and a bad value can pass through unnoticed. Use `Expr.nan_max` or `Expr.nan_min` when a NaN should poison the result. You can also check explicitly with `Expr.is_nan`. NaN is not null, so these rules are separate from null handling.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [-1.0, float(\"nan\"), 1.0]})\n\n# NaN ignored: looks like clean data\nout1 = df.select(mx=pl.col(\"a\").max(), mn=pl.col(\"a\").min())\nprint(out1.to_dict(as_series=False))\n\n# NaN propagated\nout2 = df.select(mx=pl.col(\"a\").nan_max(), mn=pl.col(\"a\").nan_min())\nprint(out2.to_dict(as_series=False))\n\n# Explicit check\nout3 = df.select(has_nan=pl.col(\"a\").is_nan().any())\nprint(out3.to_dict(as_series=False))\n",
+   "output": "{'mx': [1.0], 'mn': [-1.0]}\n{'mx': [nan], 'mn': [nan]}\n{'has_nan': [True]}"
+  },
+  {
+   "title": "NaN compares equal to NaN, so the x != x NaN check does not work",
+   "applies_to": [
+    "Expr.ne",
+    "Expr.lt",
+    "Expr.le"
+   ],
+   "trap": "In IEEE floats, numpy and pandas, `NaN != NaN` is True, and `x != x` is a common way to find NaN. Polars treats NaN as equal to itself. `Expr.ne` returns `false` for NaN vs NaN, `Expr.le` returns `true` and `Expr.lt` returns `false`. Code that relies on IEEE semantics will silently miss every NaN. Use `Expr.is_nan` to detect NaN.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1.0, float(\"nan\")], \"y\": [2.0, float(\"nan\")]})\n\nout = df.with_columns(\n    ne=pl.col(\"x\").ne(pl.col(\"y\")),\n    lt=pl.col(\"x\").lt(pl.col(\"y\")),\n    le=pl.col(\"x\").le(pl.col(\"y\")),\n    # numpy idiom for NaN detection: finds nothing here\n    self_ne=pl.col(\"x\").ne(pl.col(\"x\")),\n    # correct NaN detection\n    is_nan=pl.col(\"x\").is_nan(),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'x': [1.0, nan], 'y': [2.0, nan], 'ne': [True, False], 'lt': [True, False], 'le': [True, True], 'self_ne': [False, False], 'is_nan': [False, True]}"
+  },
+  {
+   "title": "Expr.ne propagates null, so filtering with != silently drops null rows",
+   "applies_to": [
+    "Expr.ne",
+    "Expr.ne_missing"
+   ],
+   "trap": "`Expr.ne` (the `!=` operator) returns null when either side is null. `DataFrame.filter` keeps only rows where the predicate is true, so `filter(pl.col(\"status\") != \"done\")` also removes rows whose status is null. pandas users expect those rows to be kept, because `NaN != 'done'` is True in pandas. Use `Expr.ne_missing` when null should count as \"not equal\". `Expr.ne_missing` also treats null vs null as equal (`false`).",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"status\": [\"done\", None, \"open\"]})\n\n# null row silently dropped\nprint(df.filter(pl.col(\"status\").ne(\"done\")).to_dict(as_series=False))\n\n# null row kept\nprint(df.filter(pl.col(\"status\").ne_missing(\"done\")).to_dict(as_series=False))\n\nout = df.with_columns(\n    ne=pl.col(\"status\").ne(\"done\"),\n    ne_missing=pl.col(\"status\").ne_missing(\"done\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'status': ['open']}\n{'status': [None, 'open']}\n{'status': ['done', None, 'open'], 'ne': [False, None, True], 'ne_missing': [False, True, True]}"
+  },
+  {
+   "title": "Expr.n_unique and Expr.len count nulls, unlike pandas nunique",
+   "applies_to": [
+    "Expr.n_unique",
+    "Expr.len",
+    "Expr.null_count"
+   ],
+   "trap": "`Expr.n_unique` counts null as one distinct value. pandas `nunique()` drops missing values by default, so the Polars result can be one higher than expected. `Expr.len` counts every row including nulls. Use `Expr.count` for the non-null count and `Expr.null_count` for the number of nulls. To count distinct values without null, apply `Expr.drop_nulls` before `Expr.n_unique`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"y\": [1, 1, None, None]})\n\nout = df.select(\n    n_unique=pl.col(\"y\").n_unique(),\n    n_unique_non_null=pl.col(\"y\").drop_nulls().n_unique(),\n    len=pl.col(\"y\").len(),\n    count=pl.col(\"y\").count(),\n    nulls=pl.col(\"y\").null_count(),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'n_unique': [2], 'n_unique_non_null': [1], 'len': [4], 'count': [2], 'nulls': [2]}"
+  },
+  {
+   "title": "Expr.last returns a trailing null unless ignore_nulls=True",
+   "applies_to": [
+    "Expr.last"
+   ],
+   "trap": "pandas `groupby(...).last()` returns the last non-missing value of each group. Polars `Expr.last` defaults to `ignore_nulls=False` and returns whatever is in the final row, null included. Pass `ignore_nulls=True` to get the last non-null value. The result also depends on row order, so sort the frame first if order matters.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\", \"b\"], \"v\": [1, None, 2, 3]})\n\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").last().alias(\"v_last\"),\n    pl.col(\"v\").last(ignore_nulls=True).alias(\"v_last_non_null\"),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'g': ['a', 'b'], 'v_last': [None, 3], 'v_last_non_null': [1, 3]}"
+  },
+  {
+   "title": "Expr.not_ and ~ are bitwise on integers, not logical",
+   "applies_to": [
+    "Expr.not_",
+    "Expr.or_"
+   ],
+   "trap": "`Expr.not_` (the `~` operator) negates Boolean columns but operates bitwise on integer columns. A 0/1 integer flag therefore becomes -1/-2 instead of 1/0, and no error is raised. `Expr.or_` is likewise a bitwise OR on integers. Cast integer flags to `pl.Boolean` before negating or combining them as logical conditions.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"flag\": [1, 0, None]})\n\nout = df.with_columns(\n    bitwise=pl.col(\"flag\").not_(),\n    tilde=~pl.col(\"flag\"),\n    logical=pl.col(\"flag\").cast(pl.Boolean).not_(),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'flag': [1, 0, None], 'bitwise': [-2, -1, None], 'tilde': [-2, -1, None], 'logical': [False, True, None]}"
+  },
+  {
+   "title": "Expr.kurtosis defaults to the biased estimator, so results differ from pandas",
+   "applies_to": [
+    "Expr.kurtosis"
+   ],
+   "trap": "`Expr.kurtosis` defaults to `fisher=True, bias=True`, which is the biased Fisher (excess) kurtosis, as in scipy's default. pandas `kurt()` returns the bias-corrected value, so porting code gives a different number with no error. Pass `bias=False` to apply the k-statistics correction. Pass `fisher=False` if you want Pearson kurtosis, where a normal distribution gives 3.0.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3, 2, 1]})\n\nout = df.select(\n    default_biased=pl.col(\"a\").kurtosis(),\n    unbiased=pl.col(\"a\").kurtosis(bias=False),\n    pearson=pl.col(\"a\").kurtosis(fisher=False),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'default_biased': [-1.1530612244897964], 'unbiased': [-0.6122448979591852], 'pearson': [1.8469387755102036]}"
+  },
+  {
+   "title": "Expr.map_elements never calls the function on nulls by default",
+   "applies_to": [
+    "Expr.map_elements"
+   ],
+   "trap": "`Expr.map_elements` defaults to `skip_nulls=True`, so a UDF written to handle `None` is never called for null rows, which stay null. Pass `skip_nulls=False` if the function must see nulls. Better still, use native expressions such as `Expr.fill_null`, which are much faster than a Python UDF. Always set `return_dtype` so Polars does not have to infer the output type.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 3]})\n\n\ndef f(x):\n    return 0 if x is None else x * 10\n\n\nout = df.with_columns(\n    skipped=pl.col(\"a\").map_elements(f, return_dtype=pl.Int64),\n    seen=pl.col(\"a\").map_elements(f, return_dtype=pl.Int64, skip_nulls=False),\n    native=(pl.col(\"a\") * 10).fill_null(0),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'a': [1, None, 3], 'skipped': [10, None, 30], 'seen': [10, 0, 30], 'native': [10, 0, 30]}"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows `max`/`min` ignoring NaN, `nan_max`/`nan_min` propagating it and `is_nan().any()` detecting it, consistent with the `nan_max` docstring.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows `ne` false, `le` true and `lt` false for NaN vs NaN, and the `x != x` self-comparison finds no NaN while `is_nan` does.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `ne` returning null and the filter dropping the null row, while `ne_missing` keeps it; the docstring confirms null vs null gives false.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm `n_unique` counts null as a value, `len` counts all rows, and `count`, `null_count` and `drop_nulls().n_unique()` give the non-null figures.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows `last()` returning the trailing null for group a and `ignore_nulls=True` returning 1, matching the documented default.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows 1/0 becoming -2/-1 under `not_` and `~`, and the docstrings confirm `not_` and `or_` operate bitwise on integers.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The defaults and parameter meanings match the docstring, and the output shows the biased, unbiased and Pearson values differing as described.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows the default skipping the UDF on null and `skip_nulls=False` letting it see null; the docstring supports the speed warning and the `return_dtype` recommendation.",
+   "trap": ""
+  }
+ ]
+}
