@@ -26,5 +26,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - name: Repo checks (skills frontmatter, workflow cost rules)
+      - name: Repo checks (skills frontmatter, workflow cost rules, catalogue names)
         run: python scripts/check_repo.py
+      # The catalogue must be exactly what the export script writes for its pinned version:
+      # regenerate it and fail on any difference (a hand edit, or a stale export).
+      - name: Catalogue is the export of its pinned polars
+        run: |
+          version=$(ls catalog/polars-*.json | sed -E 's|catalog/polars-(.*)\.json|\1|')
+          pip install --quiet "polars==$version"
+          python scripts/export_catalog.py
+          git diff --exit-code --stat catalog/
