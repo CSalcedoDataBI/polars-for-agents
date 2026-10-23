@@ -1,7 +1,7 @@
 # Ficha — polars-for-agents
 
-> Ficha NORTE de esta herramienta. La lee su experto (`.claude/agents/experto.md`) en cada PR.
-> Guía: [NORTE.md](https://github.com/CSalcedoDataBI/docker-lab/blob/main/NORTE.md).
+> Ficha de esta herramienta. La lee su experto (`.claude/agents/experto.md`) en cada PR.
+> Se mantiene con las reglas internas del mantenedor: su norte es `FICHA.md` y el agente `experto` fusiona contra ella.
 > Cambiarla exige una nueva aprobación de Cristóbal.
 
 ## Qué es

@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -162,7 +163,8 @@ def call_claude(prompt: str, chunk: str, kind: str, budget: Budget, model: str |
         with tempfile.TemporaryDirectory() as tmp:
             p, o = Path(tmp) / "p.md", Path(tmp) / "out.json"
             p.write_text(prompt, encoding="utf-8")
-            cmd = ["pwsh", "-NoProfile", "-File", r"D:\MIS-REPO\docker-lab\scripts\claude-review.ps1",
+            # The maintainer's claude-review CLI, on PATH; it reads its own API key.
+            cmd = [shutil.which("claude-review") or "claude-review",
                    "--prompt-file", str(p), "--schema", str(schema), "-o", str(o)]
             if model:
                 cmd += ["--model", model]

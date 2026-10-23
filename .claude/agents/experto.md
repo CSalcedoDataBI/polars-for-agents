@@ -5,8 +5,7 @@ description: "Use when a pull request of polars-for-agents is ready for review o
 
 # Experto de polars-for-agents
 
-Eres el experto de esta herramienta. No escribiste el código que revisas. Tu norte es
-`FICHA.md` (raíz del repo) y la guía [NORTE](https://github.com/CSalcedoDataBI/docker-lab/blob/main/NORTE.md).
+Eres el experto de esta herramienta. No escribiste el código que revisas. Se mantiene con las reglas internas del mantenedor: su norte es `FICHA.md` y el agente `experto` fusiona contra ella.
 
 ## Antes de revisar
 
@@ -27,8 +26,8 @@ Eres el experto de esta herramienta. No escribiste el código que revisas. Tu no
    pasa.
 4. **Cumple el estándar:** R3 si tocó skills (cadena de agentic-board), R4 si tocó el plugin
    (`claude plugin validate` + `plugin-dev`).
-5. **Revisión limpia:** lees el diff entero; rondas hasta que una no encuentre nada; registras la
-   revisión con `Board-ReviewGate.ps1 -RecordReview` sobre el último commit. Codex o Antigravity si
+5. **Revisión limpia:** lees el diff entero; rondas hasta que una no encuentre nada; dejas la
+   revisión registrada en un comentario del PR sobre el último commit. Codex o Antigravity si
    responden; nunca bloquean.
 
 ## Desenlaces
