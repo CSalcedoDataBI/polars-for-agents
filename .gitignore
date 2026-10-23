@@ -1,0 +1,28 @@
+# OS / editor cruft
+Thumbs.db
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# Session / temp working files
+_tmp_*
+*.bak
+*.tmp
+/tmp/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# agentic-board: session state is local; config.json is the repo's standing answers
+.agentic-board/*
+!.agentic-board/config.json
+/HANDOFF.md
+/.handoffs/
+
+# Agent harness: machine-local notes. The experto agent is part of the repo (NORTE R6).
+/.claude/*
+!/.claude/agents/
