@@ -140,6 +140,7 @@ def build() -> dict:
     ]
     return {
         "polars_version": pl.__version__,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         "generated_by": "scripts/export_catalog.py",
         "counts": {group: len(entries) for group, entries in groups.items()},
         "groups": groups,

@@ -25,7 +25,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          # Pinned: the export's docstrings and signatures depend on the Python version, and the
+          # catalogue records the one it was made with (python_version in the JSON).
+          python-version: "3.13"
       - name: Repo checks (skills frontmatter, workflow cost rules, catalogue names)
         run: python scripts/check_repo.py
       # The catalogue must be exactly what the export script writes for its pinned version:
