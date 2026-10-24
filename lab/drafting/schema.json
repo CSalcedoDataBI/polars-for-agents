@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["notes"],
+  "properties": {
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "applies_to", "trap", "example"],
+        "properties": {
+          "title": { "type": "string" },
+          "applies_to": { "type": "array", "items": { "type": "string" } },
+          "trap": { "type": "string" },
+          "example": { "type": "string" }
+        }
+      }
+    }
+  }
+}

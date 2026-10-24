@@ -1,0 +1,144 @@
+{
+ "chunk": "Series-3",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "is_duplicated flags every copy, not just the repeats after the first",
+   "applies_to": [
+    "Series.is_duplicated",
+    "Series.is_first_distinct",
+    "Series.is_last_distinct"
+   ],
+   "trap": "Pandas `duplicated()` defaults to `keep='first'`, so it flags only the later copies. `Series.is_duplicated` flags **every** occurrence of a value that appears more than once, including the first. Filtering with `~s.is_duplicated()` therefore drops all copies of a repeated value; it does not deduplicate. To match pandas `keep='first'`, use `~Series.is_first_distinct()`. To match `keep='last'`, use `~Series.is_last_distinct()`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, 2, 3, 2])\n\n# Wrong: flags the first 2 as well\nprint(s.is_duplicated().to_list())\n# Wrong dedup: every copy of 2 disappears\nprint(s.filter(~s.is_duplicated()).to_list())\n\n# Right: pandas keep='first' semantics\nprint((~s.is_first_distinct()).to_list())\n# Right dedup that keeps the first occurrence\nprint(s.filter(s.is_first_distinct()).to_list())\n",
+   "output": "[False, True, True, False, True]\n[1, 3]\n[False, False, True, False, True]\n[1, 2, 3]"
+  },
+  {
+   "title": "NaN and null are different: fill_null and is_null ignore NaN",
+   "applies_to": [
+    "Series.fill_null",
+    "Series.fill_nan",
+    "Series.is_null",
+    "Series.is_nan",
+    "Series.is_not_null",
+    "Series.is_not_nan"
+   ],
+   "trap": "Unlike pandas, Polars keeps the missing value (null) separate from the float NaN. `Series.fill_null` leaves NaN untouched, and `Series.fill_nan` leaves nulls untouched. `Series.is_null` returns `False` for NaN, and `Series.is_nan` returns null (not `False`) for a null element. To clean both, convert NaN to null first with `s.fill_nan(None)`, then call `Series.fill_null`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [1.0, None, float(\"nan\")])\n\nprint(s.fill_null(0.0).to_list())  # NaN survives\nprint(s.fill_nan(0.0).to_list())   # null survives\nprint(s.is_null().to_list())       # NaN not flagged\nprint(s.is_nan().to_list())\n\n# Right: turn NaN into null, then fill all missing values at once\nprint(s.fill_nan(None).fill_null(0.0).to_list())\n",
+   "output": "[1.0, 0.0, nan]\n[1.0, None, 0.0]\n[False, True, False]\n[False, None, True]\n[1.0, 0.0, 0.0]"
+  },
+  {
+   "title": "is_in returns null for null inputs unless nulls_equal=True",
+   "applies_to": [
+    "Series.is_in",
+    "Series.filter"
+   ],
+   "trap": "With the default `nulls_equal=False`, `Series.is_in` returns null (not `False`) for null elements. Negating the mask leaves that null in place, and `Series.filter` discards null mask positions. So a null row vanishes from both the \"in\" result and the \"not in\" result. Pass `nulls_equal=True` to treat null as an ordinary value. A null that is not in `other` then yields `False`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"b\", [2, 4, None])\n\nm = s.is_in([1, 2, 3])\nprint(m.to_list())                 # [True, False, None]\nprint(s.filter(~m).to_list())      # null row silently lost\n\nm2 = s.is_in([1, 2, 3], nulls_equal=True)\nprint(m2.to_list())                # [True, False, False]\nprint(s.filter(~m2).to_list())     # null row kept in the complement\n",
+   "output": "[True, False, None]\n[4]\n[True, False, False]\n[4, None]"
+  },
+  {
+   "title": "filter drops rows where the mask is null, so mask and ~mask do not partition the data",
+   "applies_to": [
+    "Series.filter",
+    "Series.gt",
+    "Series.ge"
+   ],
+   "trap": "`Series.filter` keeps only positions where the predicate is `True`. Positions where it is null are discarded. A comparison such as `Series.gt` on data containing nulls returns null at those positions. That means `s.filter(mask)` and `s.filter(~mask)` together lose the null rows. Decide explicitly where nulls belong by calling `fill_null(True)` or `fill_null(False)` on the mask.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [10, None, 30])\nmask = s.gt(15)\nprint(mask.to_list())                       # [False, None, True]\n\nprint(s.filter(mask).to_list())             # [30]\nprint(s.filter(~mask).to_list())            # [10]  -> null row in neither\n\n# Right: decide where nulls go\nprint(s.filter(mask.fill_null(False)).to_list())\nprint(s.filter((~mask).fill_null(True)).to_list())\n",
+   "output": "[False, None, True]\n[30]\n[10]\n[30]\n[10, None]"
+  },
+  {
+   "title": "is_between includes both bounds by default and never swaps reversed bounds",
+   "applies_to": [
+    "Series.is_between"
+   ],
+   "trap": "`Series.is_between` defaults to `closed='both'`, like SQL `BETWEEN`. If you build adjacent buckets with it, values that sit exactly on a shared edge are counted in two buckets. Use `closed='left'` or `closed='right'` for half-open bins. If `lower_bound` is greater than `upper_bound`, the bounds are not swapped and the result is all `False`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"num\", [1, 2, 3, 4, 5])\n\n# Wrong: 3 lands in both buckets\nprint(s.is_between(1, 3).sum(), s.is_between(3, 5).sum())  # 3 3 -> 6 of 5 values\n\n# Right: half-open buckets\nprint(s.is_between(1, 3, closed=\"left\").sum(), s.is_between(3, 5).sum())\n\n# Reversed bounds give all False\nprint(s.is_between(4, 2).to_list())\n",
+   "output": "3 3\n2 3\n[False, False, False, False, False]"
+  },
+  {
+   "title": "interpolate leaves edge nulls and changes integers to Float64",
+   "applies_to": [
+    "Series.interpolate",
+    "Series.interpolate_by",
+    "Series.forward_fill"
+   ],
+   "trap": "`Series.interpolate` and `Series.interpolate_by` only fill nulls that lie between two known values. Leading and trailing nulls remain null, so do not assume the result is null-free. Linear interpolation of an integer Series returns `Float64`, as the docstring example shows. Handle the edges explicitly, for example with `Series.forward_fill` and `backward_fill`, and cast back if you need integers.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [None, 1, None, 3, None])\nr = s.interpolate()\nprint(r.dtype)\nprint(r.to_list())                     # edges are still null\nprint(r.null_count())\n\nfilled = r.forward_fill().backward_fill()\nprint(filled.to_list())\nprint(filled.cast(pl.Int64).to_list())\n",
+   "output": "Float64\n[None, 1.0, 2.0, 3.0, None]\n2\n[1.0, 1.0, 2.0, 3.0, 3.0]\n[1, 1, 2, 3, 3]"
+  },
+  {
+   "title": "index_of returns None when not found, and index 0 is falsy",
+   "applies_to": [
+    "Series.index_of"
+   ],
+   "trap": "`Series.index_of` returns the position of the first match, or `None` when the value is absent. It does not return `-1` and it does not raise like pandas `get_loc`. A truthiness check such as `if s.index_of(v):` therefore reports \"not found\" for a match at index 0. Always compare with `is not None`. Passing `None` searches for the first null.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [17, None, 5])\n\nidx = s.index_of(17)\nprint(idx)                              # 0\nprint(\"truthy check:\", bool(idx))       # False -> wrongly 'not found'\nprint(\"correct check:\", idx is not None)\n\nprint(s.index_of(55))                   # None, not -1\nprint(s.index_of(None))                 # 1, position of the null\n",
+   "output": "0\ntruthy check: False\ncorrect check: True\nNone\n1"
+  },
+  {
+   "title": "has_validity is deprecated; has_nulls replaces it and ignores NaN",
+   "applies_to": [
+    "Series.has_validity",
+    "Series.has_nulls",
+    "Series.is_nan"
+   ],
+   "trap": "`Series.has_validity` has been deprecated since 0.20.30. Use `Series.has_nulls` instead. `Series.has_nulls` only reports null values, so a float Series full of NaN still returns `False`. To detect NaN, use `Series.is_nan` combined with `any()`.",
+   "example": "import polars as pl\n\nf = pl.Series(\"x\", [1.0, float(\"nan\")])\nprint(f.has_nulls())          # False, despite the NaN\nprint(f.is_nan().any())       # True\n\ng = pl.Series(\"y\", [1.0, None])\nprint(g.has_nulls())          # True\nprint(g.null_count())\n",
+   "output": "False\nTrue\nTrue\n1"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output confirms that `Series.is_duplicated` flags every copy and that `~is_first_distinct` flags only the later copies, and the `is_last_distinct` docstring supports the keep='last' mapping.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "fix",
+   "reason": "The output shows `Series.is_nan` returns null, not `False`, at a null position, and the trap's wording 'does not flag null' hides this null propagation.",
+   "trap": "Unlike pandas, Polars keeps the missing value (null) separate from the float NaN. `Series.fill_null` leaves NaN untouched, and `Series.fill_nan` leaves nulls untouched. `Series.is_null` returns `False` for NaN, and `Series.is_nan` returns null (not `False`) for a null element. To clean both, convert NaN to null first with `s.fill_nan(None)`, then call `Series.fill_null`."
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "Both the output and the docstring show null propagation by default, its loss through `filter(~m)`, and `False` with `nulls_equal=True`.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output and the `Series.filter` docstring confirm that null mask positions are discarded and that `fill_null` on the mask resolves this.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows double counting with the default `closed='both'` and all `False` for reversed bounds, matching the docstring note.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm that edge nulls remain and that integer input becomes `Float64` under linear interpolation.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output confirms index 0 is falsy, `None` is returned when the value is absent, and passing `None` finds the first null.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The docstring confirms the deprecation since 0.20.30, and the output shows `has_nulls` returning `False` despite a NaN.",
+   "trap": ""
+  }
+ ]
+}

@@ -1,0 +1,49 @@
+name: release-please
+
+on:
+  # Runs after the merge: it reads the conventional commits on main and keeps the release PR
+  # up to date. Merging that PR creates the vX.Y.Z tag and the GitHub release.
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  # For `gh workflow run` on the release branch. See the last step.
+  actions: write
+
+# R2 with the standard's exception: cancel-in-progress FALSE. A release cancelled halfway
+# leaves tags and PRs inconsistent, which costs more than the minute it saves.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    # Public repo: GitHub runners are free, and a self-hosted runner would run fork PRs locally.
+    runs-on: ubuntu-latest
+    # R3: the action reads commits and updates one PR, well under a minute.
+    timeout-minutes: 10
+    steps:
+      # Pinned to a commit: this step holds write tokens, so the code it runs must not move
+      # with a tag. The SHA is what the v4 tag pointed to on 2026-10-23.
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # config + manifest are read from the repo root by default:
+          #   release-please-config.json  /  .release-please-manifest.json
+
+      # The release PR is pushed by a bot with GITHUB_TOKEN, and that never triggers
+      # `pull_request` workflows, so the required `Validate` check would never report and the
+      # PR could not merge. `workflow_dispatch` is exempt from that rule: ask for the verdict
+      # here, by name, against the release branch. `pr` is only set when this run created or
+      # updated the PR; otherwise there is no new tree to judge.
+      - name: Ask Validate for a verdict on the release branch
+        if: steps.release.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No checkout in this job: without GH_REPO, `gh` looks for a .git that is not there.
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
+        run: gh workflow run validate.yml --ref "$BRANCH"

@@ -1,0 +1,112 @@
+{
+ "chunk": "Expr.name",
+ "group": "Expr.name",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Renaming inside with_columns adds columns instead of renaming them",
+   "applies_to": [
+    "Expr.name.to_lowercase",
+    "Expr.name.to_uppercase",
+    "Expr.name.prefix",
+    "Expr.name.suffix",
+    "Expr.name.map"
+   ],
+   "trap": "A pandas user expects `df.rename(columns=str.lower)` behaviour. `Expr.name.to_lowercase`, `Expr.name.prefix` and the other `Expr.name.*` methods only set the output name of an expression. Inside `DataFrame.with_columns` the originals stay and the renamed copies are appended, which doubles the data. Use `DataFrame.select` to replace the columns, or `DataFrame.rename` (it accepts a callable) for a pure rename.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"ColX\": [1, 2], \"ColY\": [\"x\", \"y\"]})\n\n# Trap: originals kept, copies appended\nadded = df.with_columns(pl.all().name.to_lowercase())\nprint(added.columns)\n\n# Right: select replaces, rename renames\nprint(df.select(pl.all().name.to_lowercase()).columns)\nprint(df.rename(str.lower).columns)\n",
+   "output": "['ColX', 'ColY', 'colx', 'coly']\n['colx', 'coly']\n['colx', 'coly']"
+  },
+  {
+   "title": "name.keep discards your alias and overwrites the source column in with_columns",
+   "applies_to": [
+    "Expr.name.keep",
+    "Expr.alias"
+   ],
+   "trap": "`Expr.name.keep` restores the root column name, so an earlier `Expr.alias` is undone. Inside `DataFrame.with_columns` the result then silently replaces the original column instead of creating a new one. Only use `Expr.name.keep` when overwriting in place is what you want. Otherwise keep the `Expr.alias` as the last name operation.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\n\n# Trap: alias 'c' is discarded and 'a' is overwritten\nout = df.with_columns((pl.col(\"a\") * 9).alias(\"c\").name.keep())\nprint(out.columns, out[\"a\"].to_list())\n\n# Right: alias last keeps 'a' intact and adds 'c'\ngood = df.with_columns((pl.col(\"a\") * 9).alias(\"c\"))\nprint(good.columns, good[\"a\"].to_list())\n",
+   "output": "['a', 'b'] [9, 18]\n['a', 'b', 'c'] [1, 2]"
+  },
+  {
+   "title": "name.replace treats the pattern as a regex by default",
+   "applies_to": [
+    "Expr.name.replace"
+   ],
+   "trap": "`Expr.name.replace` interprets `pattern` as a regular expression unless `literal=True` is passed. A pattern like `\".\"` therefore matches every character, and the docstring example shows that every match in the name is replaced. In `value`, `$` refers to a capture group, so a literal dollar sign must be written as `$$` (or use `literal=True`). Pass `literal=True` for plain substring renames.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"price.usd\": [1], \"qty\": [2]})\n\n# Trap: '.' is a regex that matches every character\nprint(df.select(pl.all().name.replace(\".\", \"_\")).columns)\n\n# Right: literal substring replacement\nprint(df.select(pl.all().name.replace(\".\", \"_\", literal=True)).columns)\n",
+   "output": "['_________', '___']\n['price_usd', 'qty']"
+  },
+  {
+   "title": "Generated names can collide: silent overwrite in with_columns, DuplicateError in select",
+   "applies_to": [
+    "Expr.name.to_lowercase",
+    "Expr.name.to_uppercase",
+    "Expr.name.map",
+    "Expr.name.replace"
+   ],
+   "trap": "`Expr.name.*` methods do not check whether the new name already exists. In `DataFrame.with_columns`, a generated name that matches an existing column replaces that column without any warning. In `DataFrame.select`, two outputs that map to the same name raise an error. Check the resulting names for collisions before you apply a bulk rename. For example, columns `ColX` and `colx` collide under `Expr.name.to_lowercase`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"ColX\": [1, 2], \"colx\": [10, 20]})\n\n# Trap 1: existing 'colx' is silently overwritten with ColX's values\nout = df.with_columns(pl.col(\"ColX\").name.to_lowercase())\nprint(out.columns, out[\"colx\"].to_list())\n\n# Trap 2: two outputs named 'colx' in one select\ntry:\n    df.select(pl.all().name.to_lowercase())\nexcept Exception as e:\n    print(type(e))\n",
+   "output": "['ColX', 'colx'] [1, 2]\n<class 'polars.exceptions.DuplicateError'>"
+  },
+  {
+   "title": "prefix renames the struct column, prefix_fields renames its fields",
+   "applies_to": [
+    "Expr.name.prefix",
+    "Expr.name.suffix",
+    "Expr.name.prefix_fields",
+    "Expr.name.suffix_fields",
+    "Expr.name.map_fields",
+    "DataFrame.unnest"
+   ],
+   "trap": "`Expr.name.prefix` and `Expr.name.suffix` change only the column name. They leave the struct's inner field names alone, so unnesting two structs that share field names still collides. To rename the fields, use `Expr.name.prefix_fields`, `Expr.name.suffix_fields` or `Expr.name.map_fields`, which only take effect for struct columns. Apply them before `DataFrame.unnest` to get distinct column names.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s1\": [{\"a\": 1}], \"s2\": [{\"a\": 2}]})\n\n# prefix touches the column name only; fields are still 'a'\nprint(df.select(pl.col(\"s1\").name.prefix(\"p_\")).schema)\n\ntry:\n    df.unnest(\"s1\", \"s2\")\nexcept Exception as e:\n    print(type(e))\n\nfixed = df.select(\n    pl.col(\"s1\").name.prefix_fields(\"s1_\"),\n    pl.col(\"s2\").name.map_fields(lambda f: \"s2_\" + f),\n).unnest(\"s1\", \"s2\")\nprint(fixed.columns)\n",
+   "output": "Schema({'p_s1': Struct({'a': Int64})})\n<class 'polars.exceptions.DuplicateError'>\n['s1_a', 's2_a']"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "A literal on the left names the output 'literal', so multi-column expressions collide",
+    "applies_to": [
+     "Expr.name.keep"
+    ],
+    "trap": "An expression such as `pl.lit(10) / pl.all()` takes its output name from the leftmost input, which is the literal. Every resulting column is named `literal`, so the select fails with duplicate names. The `Expr.name.keep` docstring shows the fix: append `Expr.name.keep()` to restore each root column name.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\n\n# Trap: both outputs are named after the literal\ntry:\n    df.select(pl.lit(10) / pl.all())\nexcept Exception as e:\n    print(type(e))\n\n# Right: restore the root column names\nprint(df.select((pl.lit(10) / pl.all()).name.keep()))\n"
+   },
+   "problems": [
+    "example failed: UnicodeEncodeError: 'charmap' codec can't encode characters in position 15-33: character maps to <undefined>"
+   ]
+  }
+ ],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows that `DataFrame.with_columns` keeps the originals and appends the lowercased copies, while `DataFrame.select` and `DataFrame.rename(str.lower)` give pure renames.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "Both the output and the `Expr.name.keep` docstring show the alias undone and column 'a' overwritten in place.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows '.' replacing every character as a regex, and `literal=True` fixing it; the `$$` advice comes straight from the docstring Notes.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows the existing 'colx' silently overwritten with ColX's values in `DataFrame.with_columns`, and `DataFrame.select` raising DuplicateError.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The schema output shows `Expr.name.prefix` leaving field 'a' unchanged and unnest raising DuplicateError; the fields-renaming methods produce distinct columns, and the docstrings confirm they only take effect for struct columns.",
+   "trap": ""
+  }
+ ]
+}

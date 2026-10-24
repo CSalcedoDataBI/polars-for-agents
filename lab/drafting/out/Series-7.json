@@ -1,0 +1,132 @@
+{
+ "chunk": "Series-7",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Pass maintain_order=True when the order of unique values matters",
+   "applies_to": [
+    "Series.unique"
+   ],
+   "trap": "`Series.unique` defaults to `maintain_order=False`, so the order of the result is not guaranteed. Code that takes the first unique value, or that zips the result with something else, can silently change between runs. Pass `maintain_order=True` to keep first-appearance order, or call `Series.sort` on the result if you want sorted order.",
+   "example": "import polars as pl\n\ns = pl.Series('a', [3, 1, 3, 2])\n\n# Default: order is not guaranteed, so sort explicitly if you need a stable result\nprint(s.unique().sort().to_list())\n\n# First-appearance order, like pandas unique()\nprint(s.unique(maintain_order=True).to_list())\n",
+   "output": "[1, 2, 3]\n[3, 1, 2]"
+  },
+  {
+   "title": "Sort the result of top_k yourself and expect nulls to be skipped",
+   "applies_to": [
+    "Series.top_k",
+    "Series.top_k_by"
+   ],
+   "trap": "`Series.top_k` and `Series.top_k_by` do not return elements in any particular order. Do not assume the first element is the largest; call `Series.sort` on the result. Non-null elements are always preferred over nulls, and for `Series.top_k_by` this holds regardless of `reverse`. So a 'smallest k' query with `reverse=True` picks non-null values before any nulls rather than treating null as the minimum.",
+   "example": "import polars as pl\n\ns = pl.Series('a', [2, None, 5, 1, 4])\n\n# Unordered output: sort explicitly\nprint(s.top_k(3).sort(descending=True).to_list())\n\n# reverse=True gives the smallest values, and nulls are still skipped\nprint(s.top_k_by('a', 2, reverse=True).sort().to_list())\n",
+   "output": "[5, 4, 2]\n[1, 2]"
+  },
+  {
+   "title": "Series.var uses the sample variance (ddof=1) by default",
+   "applies_to": [
+    "Series.var"
+   ],
+   "trap": "`Series.var` divides by `N - ddof` with `ddof=1` by default, which gives the sample variance. Code ported from NumPy, where the default is population variance (`ddof=0`), will get different numbers. Pass `ddof=0` explicitly when you want the population variance.",
+   "example": "import polars as pl\n\ns = pl.Series('a', [1, 2, 3])\nprint(s.var())        # sample variance, ddof=1\nprint(s.var(ddof=0))  # population variance\n",
+   "output": "1.0\n0.6666666666666666"
+  },
+  {
+   "title": "to_physical output depends on dtype details and is not a stable encoding",
+   "applies_to": [
+    "Series.to_physical"
+   ],
+   "trap": "`Series.to_physical` exposes the internal representation. For example, `Datetime` becomes `Int64` counted in the column's own time unit, so the same instant gives different integers for `ms` and `us`. `Categorical` becomes `UInt32` codes. The docs warn that physical representations are an implementation detail and not guaranteed to be stable, so do not persist or compare these integers across datasets. For epoch values with an explicit unit, use `Expr.dt.epoch`.",
+   "example": "import polars as pl\n\ndf = pl.select(\n    ms=pl.datetime(2024, 1, 1, time_unit='ms'),\n    us=pl.datetime(2024, 1, 1, time_unit='us'),\n)\nprint(df['ms'].to_physical().to_list())\nprint(df['us'].to_physical().to_list())\n\n# Explicit unit: identical regardless of storage unit\nprint(df.select(pl.col('ms', 'us').dt.epoch('s')).row(0))\n",
+   "output": "[1704067200000]\n[1704067200000000]\n(1704067200, 1704067200)"
+  },
+  {
+   "title": "Pair unique_counts with unique(maintain_order=True), not the default unique",
+   "applies_to": [
+    "Series.unique_counts",
+    "Series.unique"
+   ],
+   "trap": "`Series.unique_counts` returns only the counts, in order of first appearance, and not the values. The default `Series.unique()` does not guarantee order, so zipping the two can attach counts to the wrong values. Pair it with `Series.unique(maintain_order=True)`, or use `Series.value_counts` to get values and counts together.",
+   "example": "import polars as pl\n\ns = pl.Series('id', ['b', 'a', 'b', 'c', 'b'])\nkeys = s.unique(maintain_order=True)\ncounts = s.unique_counts()\nprint(list(zip(keys.to_list(), counts.to_list())))\n\nvc = s.value_counts()\nprint(sorted(vc.rows()))\n",
+   "output": "[('b', 3), ('a', 1), ('c', 1)]\n[('a', 1), ('b', 3), ('c', 1)]"
+  },
+  {
+   "title": "value_counts returns an unsorted DataFrame with a 'count' column",
+   "applies_to": [
+    "Series.value_counts"
+   ],
+   "trap": "`Series.value_counts` returns a `DataFrame` with one column of values and one column of counts. It does not return a Series indexed by value. The counts column is named `count`, or `proportion` when `normalize=True`. The default is `sort=False`, which leaves the row order non-deterministic, so `.head(1)` is not reliably the most frequent value. Pass `sort=True` for descending counts, and use `name=` to choose the count column name.",
+   "example": "import polars as pl\n\ns = pl.Series('color', ['red', 'blue', 'red', 'green', 'blue', 'blue'])\nvc = s.value_counts(sort=True)\nprint(isinstance(vc, pl.DataFrame), vc.columns)\nprint(vc.rows())\nprint(s.value_counts(sort=True, normalize=True).columns)\nprint(s.value_counts(sort=True, name='n').columns)\n",
+   "output": "True ['color', 'count']\n[('blue', 3), ('red', 2), ('green', 1)]\n['color', 'proportion']\n['color', 'n']"
+  },
+  {
+   "title": "zip_with keeps self where the mask is True and takes a Series for other",
+   "applies_to": [
+    "Series.zip_with"
+   ],
+   "trap": "`Series.zip_with(mask, other)` takes values from `self` where `mask` is true and from `other` where it is false. The calling Series is the 'true' branch, so swapping `self` and `other` silently inverts the selection. `other` is documented as a Series of the same type, so pass a Series rather than a scalar. For conditional logic inside a frame, prefer `pl.when`.",
+   "example": "import polars as pl\n\ns1 = pl.Series('a', [1, 2, 3])\ns2 = pl.Series('b', [10, 20, 30])\nmask = pl.Series([True, False, True])\nprint(s1.zip_with(mask, s2).to_list())  # self where True\nprint(s2.zip_with(mask, s1).to_list())  # swapped: inverted selection\n",
+   "output": "[1, 20, 3]\n[10, 2, 30]"
+  },
+  {
+   "title": "to_numpy may return a read-only array, and zero_copy_only is deprecated",
+   "applies_to": [
+    "Series.to_numpy"
+   ],
+   "trap": "When the conversion is zero-copy (numeric dtype, no nulls, single chunk), `Series.to_numpy` returns an array that is not writable, and in-place assignment on it raises an error. Pass `writable=True` to force a copy you can mutate. The `zero_copy_only` parameter is deprecated in favour of `allow_copy=False`, which is its inverse, and `use_pyarrow` is deprecated as well. With `allow_copy=False`, any conversion that needs a copy fails, for example a Series with nulls.",
+   "example": "import polars as pl\n\ns = pl.Series('a', [1, 2, 3], dtype=pl.Int8)\narr = s.to_numpy()\ntry:\n    arr[0] = 10\nexcept Exception as e:\n    print(repr(e).split('(')[0])\n\nw = s.to_numpy(writable=True)\nw[0] = 10\nprint(pl.Series(w).to_list(), s.to_list())\n\ntry:\n    pl.Series('b', [1, None]).to_numpy(allow_copy=False)\nexcept Exception as e:\n    print(repr(e).split('(')[0])\n",
+   "output": "ValueError\n[10, 2, 3] [1, 2, 3]\nRuntimeError"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The default `maintain_order=False` and the first-appearance order with `maintain_order=True` are supported by the signature, the docstring and the output `[3, 1, 2]`.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "fix",
+   "reason": "The docstring only says non-null elements are preferred over nulls, so the claim that a smallest-k query 'never returns null' is overstated: nulls can still appear when there are fewer than k non-null values.",
+   "trap": "`Series.top_k` and `Series.top_k_by` do not return elements in any particular order. Do not assume the first element is the largest; call `Series.sort` on the result. Non-null elements are always preferred over nulls, and for `Series.top_k_by` this holds regardless of `reverse`. So a 'smallest k' query with `reverse=True` picks non-null values before any nulls rather than treating null as the minimum."
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The docstring confirms `ddof=1` by default, and the output shows 1.0 versus 0.666… for `ddof=0`.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The unit-dependent integers are shown in the output, the `Categorical` to `UInt32` mapping and the stability warning come from the docstring, and the `Expr.dt.epoch` result is shown.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The docstring says `Series.unique_counts` follows order of appearance, the default `Series.unique` order is unspecified, and the output confirms the pairing.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The DataFrame return type, the `count`/`proportion` names, the non-deterministic order with `sort=False` and the `name=` option all match the docstring and output.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "Self-where-true semantics and `other` being a Series match the docstring, and the output shows the inverted selection when the two Series are swapped.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The read-only zero-copy array, `writable=True`, the deprecations, the inverse `allow_copy` and the failure on nulls with `allow_copy=False` are all supported by the docstring and output.",
+   "trap": ""
+  }
+ ]
+}

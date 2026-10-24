@@ -1,0 +1,137 @@
+{
+ "chunk": "functions-3",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pl.lit of a Python list is one List value, not a column",
+   "applies_to": [
+    "pl.lit"
+   ],
+   "trap": "The `pl.lit` docstring states that `pl.lit([1, 2, 3])` produces a `List<i64>` literal. Writing `with_columns(x=pl.lit([10, 20, 30]))` the pandas way therefore gives a list-typed column, not one element per row. To add a column of values, pass a `pl.Series` instead. Likewise `pl.lit(None)` has dtype `Null`, so give `dtype=` when you need a typed null column.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 2, 3]})\n\nwrong = df.with_columns(x=pl.lit([10, 20, 30]))\nright = df.with_columns(x=pl.Series([10, 20, 30]))\nprint(wrong.schema[\"x\"], wrong[\"x\"].to_list())\nprint(right.schema[\"x\"], right[\"x\"].to_list())\n\nuntyped = df.with_columns(n=pl.lit(None))\ntyped = df.with_columns(n=pl.lit(None, dtype=pl.Int64))\nprint(untyped.schema[\"n\"], typed.schema[\"n\"])\n",
+   "output": "List(Int64) [[10, 20, 30], [10, 20, 30], [10, 20, 30]]\nInt64 [10, 20, 30]\nNull Int64"
+  },
+  {
+   "title": "pl.linear_space includes both endpoints and turns Date into Datetime",
+   "applies_to": [
+    "pl.linear_space",
+    "pl.linear_spaces"
+   ],
+   "trap": "`pl.linear_space` defaults to `closed='both'`, so `end` is part of the output. `pl.int_range` is half-open and excludes `end`, so the two are not interchangeable. Integer bounds yield Float64 points. `Date` bounds yield `Datetime` values, not `Date`: the docstring says millisecond precision, but 1.38.1 printed `time_unit='us'`. Use `closed=\"left\"` for a half-open grid and `Expr.dt.date` to get dates back; both functions are experimental and may change without notice.",
+   "example": "import polars as pl\nfrom datetime import date\n\nboth = pl.linear_space(0, 10, 5, eager=True)\nleft = pl.linear_space(0, 10, 5, closed=\"left\", eager=True)\nints = pl.int_range(0, 10, 2, eager=True)\nprint(both.to_list(), both.dtype)\nprint(left.to_list())\nprint(ints.to_list(), ints.dtype)\n\nd = pl.linear_space(date(2024, 1, 1), date(2024, 1, 3), 3, eager=True)\nprint(d.dtype)\nprint(d.dt.date().to_list())\n",
+   "output": "[0.0, 2.5, 5.0, 7.5, 10.0] Float64\n[0.0, 2.0, 4.0, 6.0, 8.0]\n[0, 2, 4, 6, 8] Int64\nDatetime(time_unit='us', time_zone=None)\n[datetime.date(2024, 1, 1), datetime.date(2024, 1, 2), datetime.date(2024, 1, 3)]"
+  },
+  {
+   "title": "pl.max and pl.min aggregate down a column; they are not row-wise GREATEST/LEAST",
+   "applies_to": [
+    "pl.max",
+    "pl.min",
+    "pl.max_horizontal",
+    "pl.min_horizontal"
+   ],
+   "trap": "`pl.max(\"a\", \"b\")` is shorthand for `pl.col(\"a\", \"b\").max()`. It returns one row with the maximum of each column, not the larger of `a` and `b` on each row. Python's built-in `max(x, y)` and SQL `GREATEST(a, b)` lead people to expect the row-wise version. For a per-row maximum or minimum, use `pl.max_horizontal` or `pl.min_horizontal`. Note that `pl.max` and `pl.min` accept only column-name strings.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 8, 3], \"b\": [4, 5, 2]})\n\n# Per-column aggregation: collapses to a single row\nwrong = df.select(pl.max(\"a\", \"b\"))\n\n# Row-wise maximum/minimum across columns: one value per row\nright = df.with_columns(\n    row_max=pl.max_horizontal(\"a\", \"b\"),\n    row_min=pl.min_horizontal(\"a\", \"b\"),\n)\nprint(wrong.to_dicts())\nprint(right.to_dicts())\n",
+   "output": "[{'a': 8, 'b': 5}]\n[{'a': 1, 'b': 4, 'row_max': 4, 'row_min': 1}, {'a': 8, 'b': 5, 'row_max': 8, 'row_min': 5}, {'a': 3, 'b': 2, 'row_max': 3, 'row_min': 2}]"
+  },
+  {
+   "title": "Horizontal mean, max and min silently skip nulls",
+   "applies_to": [
+    "pl.mean_horizontal",
+    "pl.max_horizontal",
+    "pl.min_horizontal"
+   ],
+   "trap": "`pl.mean_horizontal` defaults to `ignore_nulls=True`. A row with a missing value is averaged over fewer columns instead of becoming null. Plain arithmetic like `(a + b) / 2` gives null for that row instead, so swapping one for the other quietly changes results. `pl.max_horizontal` and `pl.min_horizontal` also return the non-null value, as their docstring examples show. Pass `ignore_nulls=False` to `pl.mean_horizontal` when a missing input should make the result missing.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 8, 3], \"b\": [4, 5, None]})\nout = df.with_columns(\n    skip_nulls=pl.mean_horizontal(\"a\", \"b\"),\n    strict=pl.mean_horizontal(\"a\", \"b\", ignore_nulls=False),\n    arith=(pl.col(\"a\") + pl.col(\"b\")) / 2,\n    row_max=pl.max_horizontal(\"a\", \"b\"),\n)\n# Row 3: skip_nulls=3.0, row_max=3, but strict and arith are None\nfor row in out.to_dicts():\n    print(row)\n",
+   "output": "{'a': 1, 'b': 4, 'skip_nulls': 2.5, 'strict': 2.5, 'arith': 2.5, 'row_max': 4}\n{'a': 8, 'b': 5, 'skip_nulls': 6.5, 'strict': 6.5, 'arith': 6.5, 'row_max': 8}\n{'a': 3, 'b': None, 'skip_nulls': 3.0, 'strict': None, 'arith': None, 'row_max': 3}"
+  },
+  {
+   "title": "pl.quantile defaults to 'nearest' interpolation, not pandas' 'linear'",
+   "applies_to": [
+    "pl.quantile",
+    "pl.median"
+   ],
+   "trap": "`pl.quantile` uses `interpolation='nearest'` by default, so it returns an existing data point rather than interpolating. pandas and NumPy default to linear interpolation. Porting `quantile(0.5)` from pandas therefore silently gives a different number, and the result can differ from `pl.median` on even-length data. Pass `interpolation=\"linear\"` when you need pandas-compatible results.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3, 10]})\nout = df.select(\n    default_nearest=pl.quantile(\"a\", 0.5),\n    linear=pl.quantile(\"a\", 0.5, interpolation=\"linear\"),\n    median=pl.median(\"a\"),\n)\n# default_nearest is an actual data point; linear and median are 2.5\nprint(out.to_dicts())\n",
+   "output": "[{'default_nearest': 3.0, 'linear': 2.5, 'median': 2.5}]"
+  },
+  {
+   "title": "pl.n_unique counts null as a distinct value",
+   "applies_to": [
+    "pl.n_unique"
+   ],
+   "trap": "`pl.n_unique` is sugar for `Expr.n_unique`, which treats null as one more unique value. pandas `nunique()` drops missing values by default, so a ported distinct count comes out one higher whenever the column contains nulls. Use `pl.col(...).drop_nulls().n_unique()` (`Expr.drop_nulls` then `Expr.n_unique`) to match pandas or SQL `COUNT(DISTINCT ...)`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 1, None], \"b\": [\"x\", \"y\", None, \"x\"]})\n\n# Null counted as a value\nprint(df.select(pl.n_unique(\"a\", \"b\")).to_dicts())\n\n# Exclude nulls (pandas nunique / SQL COUNT(DISTINCT) semantics)\nprint(df.select(pl.col(\"a\", \"b\").drop_nulls().n_unique()).to_dicts())\n",
+   "output": "[{'a': 2, 'b': 3}]\n[{'a': 1, 'b': 2}]"
+  },
+  {
+   "title": "pl.read_csv infers dtypes from only the first 100 rows",
+   "applies_to": [
+    "pl.read_csv"
+   ],
+   "trap": "`pl.read_csv` defaults to `infer_schema_length=100`, so dtypes are guessed from the first 100 rows only. If a column looks integer early on but holds `1.5` further down, the read fails instead of widening to float. Pass `infer_schema_length=None` to scan everything, or pin dtypes with `schema_overrides`. The old `dtypes=` parameter was renamed to `schema_overrides` in 0.20.31.",
+   "example": "import polars as pl\n\ndata = (\"v\\n\" + \"1\\n\" * 150 + \"1.5\\n\").encode()\n\ntry:\n    pl.read_csv(data)\nexcept Exception as e:\n    print(repr(e).split(\"(\")[0])\n\nfull = pl.read_csv(data, infer_schema_length=None)\npinned = pl.read_csv(data, schema_overrides={\"v\": pl.Float64})\nprint(full.schema, full.height)\nprint(pinned.schema, pinned[\"v\"].tail(2).to_list())\n",
+   "output": "ComputeError\nSchema({'v': Float64}) 151\nSchema({'v': Float64}) [1.0, 1.5]"
+  },
+  {
+   "title": "pl.read_csv_batched is deprecated; stream with scan_csv().collect_batches()",
+   "applies_to": [
+    "pl.read_csv_batched"
+   ],
+   "trap": "`pl.read_csv_batched` has been deprecated since 1.37.0, and its `BatchedCsvReader` / `next_batches` loop should not be used in new code. The deprecation message names the replacement: build a lazy scan with `pl.scan_csv` and iterate `LazyFrame.collect_batches()`, which yields DataFrames.",
+   "example": "import polars as pl\nimport io\n\ndata = b\"a,b\\n1,x\\n2,y\\n3,z\\n\"\n\ntotal = 0\nfor batch in pl.scan_csv(io.BytesIO(data)).collect_batches():\n    total += batch.height\nprint(total)\n\nprint(pl.scan_csv(io.BytesIO(data)).collect().to_dicts())\n",
+   "output": "3\n[{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}, {'a': 3, 'b': 'z'}]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "Both the docstring and the output show the list becoming a broadcast `List(Int64)` column and `pl.lit(None)` getting dtype `Null` unless `dtype=` is given.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "fix",
+   "reason": "The real output shows `Datetime(time_unit='us')`, not the millisecond precision the trap repeats from the docstring, and 'shifts every value' overstates a comparison between differently parameterised calls.",
+   "trap": "`pl.linear_space` defaults to `closed='both'`, so `end` is part of the output. `pl.int_range` is half-open and excludes `end`, so the two are not interchangeable. Integer bounds yield Float64 points. `Date` bounds yield `Datetime` values, not `Date`: the docstring says millisecond precision, but 1.38.1 printed `time_unit='us'`. Use `closed=\"left\"` for a half-open grid and `Expr.dt.date` to get dates back; both functions are experimental and may change without notice."
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows one aggregated row versus per-row horizontal values, and the signature `*names: str` supports the strings-only note.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm the null-skipping defaults and the null result from `ignore_nulls=False` and from plain arithmetic.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The signature shows the `'nearest'` default, and the output shows 3.0 versus 2.5 for linear interpolation and for median.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows nulls counted as a distinct value, and the counts drop by one after `drop_nulls`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows a ComputeError with the default inference length, and both fixes produce Float64; the `dtypes` rename is in the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "fix",
+   "reason": "The pushdown claim is not supported by the output or by the docstrings.",
+   "trap": "`pl.read_csv_batched` has been deprecated since 1.37.0, and its `BatchedCsvReader` / `next_batches` loop should not be used in new code. The deprecation message names the replacement: build a lazy scan with `pl.scan_csv` and iterate `LazyFrame.collect_batches()`, which yields DataFrames."
+  }
+ ]
+}

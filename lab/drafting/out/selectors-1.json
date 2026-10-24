@@ -1,0 +1,142 @@
+{
+ "chunk": "selectors-1",
+ "group": "selectors",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "cs.string() silently skips Categorical columns",
+   "applies_to": [
+    "cs.string",
+    "cs.categorical"
+   ],
+   "trap": "`cs.string` matches only `String` columns by default. Categorical columns are not selected unless you pass `include_categorical=True`. Grouping by `cs.string()` on a frame with a categorical key therefore drops that key without any error, and the aggregates merge groups that should stay separate. Use `cs.string(include_categorical=True)`, or combine selectors with `cs.string() | cs.categorical()`.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame(\n    {\"w\": [\"a\", \"a\", \"b\"], \"z\": [\"x\", \"y\", \"x\"], \"v\": [1, 2, 4]}\n).with_columns(pl.col(\"z\").cast(pl.Categorical))\n\n# WRONG: 'z' is not used as a key, so a/x and a/y collapse into one group\nwrong = df.group_by(cs.string()).agg(cs.numeric().sum()).sort(\"w\")\nprint(wrong.columns, wrong[\"v\"].to_list())\n\n# RIGHT: include categorical keys explicitly\nright = (\n    df.group_by(cs.string(include_categorical=True))\n    .agg(cs.numeric().sum())\n    .sort(\"v\")\n)\nprint(right.columns, right[\"v\"].to_list())",
+   "output": "['w', 'v'] [3, 4]\n['w', 'z', 'v'] [1, 2, 4]"
+  },
+  {
+   "title": "Use cs.matches for regex; contains/starts_with/ends_with are literal",
+   "applies_to": [
+    "cs.contains",
+    "cs.starts_with",
+    "cs.ends_with",
+    "cs.matches"
+   ],
+   "trap": "`cs.contains`, `cs.starts_with` and `cs.ends_with` match literal substrings, so `\".\"` means a real dot. `cs.matches` takes a regex and is not anchored: it selects any column whose name contains a match anywhere. A bare `cs.matches(\".\")` therefore selects every column. Add `^` and `$` (and escape metacharacters) when you want an exact pattern.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"a.b\": [1], \"axb\": [2], \"total_a\": [3]})\n\nprint(df.select(cs.contains(\".\")).columns)       # literal dot\nprint(df.select(cs.matches(\".\")).columns)        # regex: any char -> all\nprint(df.select(cs.matches(\"a\")).columns)        # unanchored search\nprint(df.select(cs.matches(\"^a\")).columns)       # anchored at start\nprint(df.select(cs.matches(r\"^a\\.b$\")).columns)  # exact, escaped",
+   "output": "['a.b']\n['a.b', 'axb', 'total_a']\n['a.b', 'axb', 'total_a']\n['a.b', 'axb']\n['a.b']"
+  },
+  {
+   "title": "cs.alpha and cs.alphanumeric reject underscores and accept Unicode",
+   "applies_to": [
+    "cs.alpha",
+    "cs.alphanumeric",
+    "cs.digit"
+   ],
+   "trap": "`cs.alphanumeric` and `cs.alpha` require every character of the name to be a letter (or a digit, for alphanumeric). Snake_case names such as `user_id` are excluded. By default they also accept the full Unicode range, so `café` matches. Pass `ascii_only=True` to restrict to ASCII. For identifier-like names, use an explicit `cs.matches` pattern instead.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"user_id\": [1], \"score\": [2], \"q1\": [3], \"café\": [4]})\n\nprint(df.select(cs.alphanumeric()).columns)  # user_id excluded\nprint(df.select(cs.alphanumeric(ascii_only=True)).columns)\nprint(df.select(cs.alpha()).columns)\n# Explicit ASCII identifier pattern, underscores allowed\nprint(df.select(cs.matches(r\"^[A-Za-z0-9_]+$\")).columns)",
+   "output": "['score', 'q1', 'café']\n['score', 'q1']\n['score', 'café']\n['user_id', 'score', 'q1']"
+  },
+  {
+   "title": "cs.datetime(time_zone=None) means naive only, not any zone",
+   "applies_to": [
+    "cs.datetime"
+   ],
+   "trap": "The default `time_zone` of `cs.datetime` is `('*', None)`, which matches both tz-aware and naive columns. Passing `time_zone=None` does not mean \"don't filter\": it selects only columns without a timezone. `\"*\"` selects only tz-aware columns. `time_unit` is also a filter, so `cs.datetime(\"ms\")` selects nothing when the columns use the default `us` unit.",
+   "example": "import polars as pl\nimport polars.selectors as cs\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"naive\": [datetime(2024, 1, 1)]}).with_columns(\n    utc=pl.col(\"naive\").dt.replace_time_zone(\"UTC\")\n)\n\nprint(df.select(cs.datetime()).columns)                 # both\nprint(df.select(cs.datetime(time_zone=None)).columns)   # naive only\nprint(df.select(cs.datetime(time_zone=\"*\")).columns)    # tz-aware only\nprint(df.select(cs.datetime(\"ms\")).columns)             # [] (columns are us)",
+   "output": "['naive', 'utc']\n['naive']\n['utc']\n[]"
+  },
+  {
+   "title": "cs.first and cs.last pick columns, not rows",
+   "applies_to": [
+    "cs.first",
+    "cs.last",
+    "Expr.first",
+    "Expr.last"
+   ],
+   "trap": "`cs.first` and `cs.last` select the first or last column of the current scope. They do not return the first or last value of a column. For values, use `Expr.first` or `Expr.last` on an expression, for example `pl.all().first()`. Because the selection is positional, adding a column with `DataFrame.with_columns` changes what `cs.last()` refers to.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"name\": [\"b\", \"a\"], \"v\": [10, 20]})\n\nprint(df.select(cs.first()))         # whole 'name' column, 2 rows\nprint(df.select(pl.all().first()))   # first row of every column\n\nprint(df.select(cs.last()).columns)  # ['v']\ndf2 = df.with_columns(v2=pl.col(\"v\") * 2)\nprint(df2.select(cs.last()).columns) # now ['v2']",
+   "output": "shape: (2, 1)\n┌──────┐\n│ name │\n│ ---  │\n│ str  │\n╞══════╡\n│ b    │\n│ a    │\n└──────┘\nshape: (1, 2)\n┌──────┬─────┐\n│ name ┆ v   │\n│ ---  ┆ --- │\n│ str  ┆ i64 │\n╞══════╪═════╡\n│ b    ┆ 10  │\n└──────┴─────┘\n['v']\n['v2']"
+  },
+  {
+   "title": "cs.by_name and cs.by_index raise on missing columns and reorder output",
+   "applies_to": [
+    "cs.by_name",
+    "cs.by_index"
+   ],
+   "trap": "`cs.by_name` and `cs.by_index` default to `require_all=True`. One missing name or out-of-bounds index raises an error instead of being skipped. Pass `require_all=False` to keep only the columns that exist. Both selectors return columns in the order you list them, not in schema order, so do not assume the output keeps the frame's column order.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"a\": [1], \"b\": [2], \"c\": [3]})\n\ntry:\n    df.select(cs.by_name(\"c\", \"missing\"))\nexcept Exception as e:\n    print(type(e))\n\nprint(df.select(cs.by_name(\"c\", \"missing\", require_all=False)).columns)\n# Order follows the selector, not the schema\nprint(df.select(cs.by_name(\"c\", \"a\")).columns)\nprint(df.select(cs.by_index(-1, 0)).columns)",
+   "output": "<class 'polars.exceptions.ColumnNotFoundError'>\n['c']\n['c', 'a']\n['c', 'a']"
+  },
+  {
+   "title": "cs.exclude silently ignores names that do not exist",
+   "applies_to": [
+    "cs.exclude",
+    "DataFrame.drop"
+   ],
+   "trap": "`cs.exclude` accepts names, dtypes and selectors. A name that matches no column is ignored without an error. A typo or a wrong-case name therefore leaves the column you meant to remove in the result. When the column must exist, use `DataFrame.drop`, which errors on unknown names by default.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"id\": [1, 2], \"price\": [9.5, 3.0], \"qty\": [2, 4]})\n\n# WRONG: typo 'ID' is silently ignored, so 'id' is still there\nprint(df.select(cs.exclude(\"ID\")).columns)\n\n# RIGHT: DataFrame.drop fails loudly on the typo\ntry:\n    df.drop(\"ID\")\nexcept Exception as e:\n    print(type(e))\nprint(df.drop(\"id\").columns)",
+   "output": "['id', 'price', 'qty']\n<class 'polars.exceptions.ColumnNotFoundError'>\n['price', 'qty']"
+  },
+  {
+   "title": "cs.expand_selector is strict and rejects plain expressions",
+   "applies_to": [
+    "cs.expand_selector",
+    "cs.is_selector"
+   ],
+   "trap": "`cs.expand_selector` defaults to `strict=True` and only expands genuine selectors. A plain column expression such as `pl.col(...)` is not a selector (`cs.is_selector` returns False), so in strict mode it fails. Pass `strict=False` to expand broader column expressions. Alternatively, build the selection from selectors only, for example with set difference (`cs.numeric() - cs.by_name(\"id\")`).",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"id\": [1], \"x\": [1.0], \"s\": [\"a\"]})\n\nprint(cs.is_selector(pl.col(\"id\")), cs.is_selector(cs.numeric()))\nprint(cs.expand_selector(df, cs.numeric() - cs.by_name(\"id\")))\n\ntry:\n    cs.expand_selector(df, pl.col(\"id\", \"s\"))\nexcept Exception as e:\n    print(type(e))\n\nprint(cs.expand_selector(df, pl.col(\"id\", \"s\"), strict=False))",
+   "output": "False True\n('x',)\n<class 'TypeError'>\n('id', 's')"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows `z` silently dropped as a key, with groups merged to [3, 4] versus [1, 2, 4] when it is included, and this matches the `cs.string` docstring.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output confirms that `cs.contains` treats the dot literally while `cs.matches` searches unanchored, and the docstrings describe the substring selectors as literal.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows `user_id` excluded, `café` included by default and dropped with `ascii_only=True`, and the explicit regex selecting the identifier-like names.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output and the `cs.datetime` docstring both support the default `('*', None)`, `None` meaning naive only, `\"*\"` meaning tz-aware only, and `\"ms\"` returning nothing on `us` columns.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows `cs.first` returning a whole column, `pl.all().first()` returning the first row, and `cs.last` shifting to `v2` after `with_columns`.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows `ColumnNotFoundError`, the `require_all=False` fallback and selector-ordered results, and the docstrings confirm the same behaviour for `cs.by_index`.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows `cs.exclude(\"ID\")` silently ignored while `DataFrame.drop(\"ID\")` raises `ColumnNotFoundError`, which is consistent with its default `strict=True`.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows `cs.is_selector` returning False for `pl.col`, strict mode raising `TypeError`, and `strict=False` expanding the expression, all as described in the docstring.",
+   "trap": ""
+  }
+ ]
+}

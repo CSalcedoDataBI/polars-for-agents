@@ -1,0 +1,108 @@
+{
+ "chunk": "Expr.dt-2",
+ "group": "Expr.dt",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "total_* duration accessors truncate to whole units by default",
+   "applies_to": [
+    "Expr.dt.total_days",
+    "Expr.dt.total_hours",
+    "Expr.dt.total_minutes",
+    "Expr.dt.total_seconds",
+    "Expr.dt.total_milliseconds",
+    "Expr.dt.total_microseconds"
+   ],
+   "trap": "pandas `Timedelta.total_seconds()` returns a float. The Polars `Expr.dt.total_*` methods default to `fractional=False` and return `Int64`, so the partial unit is dropped. A 90-minute duration gives `1` from `Expr.dt.total_hours`, and 59 seconds gives `0` from `Expr.dt.total_minutes`. Pass `fractional=True` to get a `Float64` that keeps the fractional part.",
+   "example": "import polars as pl\nfrom datetime import timedelta\n\ndf = pl.DataFrame({\"d\": [timedelta(minutes=90), timedelta(seconds=59)]})\nout = df.select(\n    hours_int=pl.col(\"d\").dt.total_hours(),\n    hours_frac=pl.col(\"d\").dt.total_hours(fractional=True),\n    minutes_int=pl.col(\"d\").dt.total_minutes(),\n    minutes_frac=pl.col(\"d\").dt.total_minutes(fractional=True),\n)\nfor row in out.to_dicts():\n    print(row)\nprint(out.schema)",
+   "output": "{'hours_int': 1, 'hours_frac': 1.5, 'minutes_int': 90, 'minutes_frac': 90.0}\n{'hours_int': 0, 'hours_frac': 0.016388888888888887, 'minutes_int': 0, 'minutes_frac': 0.9833333333333334}\nSchema({'hours_int': Int64, 'hours_frac': Float64, 'minutes_int': Int64, 'minutes_frac': Float64})"
+  },
+  {
+   "title": "weekday is ISO: Monday is 1 and Sunday is 7, not 0 to 6",
+   "applies_to": [
+    "Expr.dt.weekday"
+   ],
+   "trap": "pandas `dayofweek` numbers Monday as 0 and Sunday as 6. `Expr.dt.weekday` returns the ISO weekday instead, with Monday = 1 and Sunday = 7. A ported weekend filter such as `weekday >= 5` silently tags Fridays as weekend days. In Polars, test for weekends with `>= 6`.",
+   "example": "import polars as pl\nfrom datetime import date\n\ndf = pl.DataFrame(\n    {\"date\": pl.date_range(date(2024, 1, 5), date(2024, 1, 8), eager=True)}\n)  # Fri, Sat, Sun, Mon\nout = df.with_columns(wd=pl.col(\"date\").dt.weekday()).with_columns(\n    pandas_habit_weekend=pl.col(\"wd\") >= 5,\n    correct_weekend=pl.col(\"wd\") >= 6,\n)\nprint(out.columns)\nfor row in out.rows():\n    print(row)",
+   "output": "['date', 'wd', 'pandas_habit_weekend', 'correct_weekend']\n(datetime.date(2024, 1, 5), 5, True, False)\n(datetime.date(2024, 1, 6), 6, True, True)\n(datetime.date(2024, 1, 7), 7, True, True)\n(datetime.date(2024, 1, 8), 1, False, False)"
+  },
+  {
+   "title": "Pair ISO week with iso_year, not year",
+   "applies_to": [
+    "Expr.dt.week",
+    "Expr.dt.year",
+    "Expr.dt.iso_year"
+   ],
+   "trap": "`Expr.dt.week` returns the ISO week number, from 1 to 53. Dates in early January can belong to week 52 or 53 of the previous ISO year, and late-December dates can belong to week 1 of the next one. `Expr.dt.year` returns the calendar year, so grouping by (`year`, `week`) mixes days from different weeks into one bucket. Group by `Expr.dt.iso_year` together with `Expr.dt.week` instead.",
+   "example": "import polars as pl\nfrom datetime import date\n\ndf = pl.DataFrame({\"date\": [date(2021, 1, 1), date(2021, 1, 4), date(2024, 12, 30)]})\nout = df.with_columns(\n    year=pl.col(\"date\").dt.year(),\n    iso_year=pl.col(\"date\").dt.iso_year(),\n    week=pl.col(\"date\").dt.week(),\n)\nprint(out.columns)\nfor row in out.rows():\n    print(row)",
+   "output": "['date', 'year', 'iso_year', 'week']\n(datetime.date(2021, 1, 1), 2021, 2020, 53)\n(datetime.date(2021, 1, 4), 2021, 2021, 1)\n(datetime.date(2024, 12, 30), 2024, 2025, 1)"
+  },
+  {
+   "title": "truncate('7d') is not truncate('1w'): non-weekly buckets start at the Unix epoch",
+   "applies_to": [
+    "Expr.dt.truncate"
+   ],
+   "trap": "With `Expr.dt.truncate`, weekly buckets (`'1w'`) start on Monday, but all other buckets start on the Unix epoch, 1970-01-01, which was a Thursday. As a result, `truncate('7d')` produces Thursday-aligned buckets, not Monday ones. Use `'1w'` when you want calendar weeks, and remember that multi-day buckets such as `'2d'` are aligned to the epoch, not to your data.",
+   "example": "import polars as pl\nfrom datetime import date\n\ndf = pl.DataFrame({\"d\": [date(2024, 1, 10)]})  # a Wednesday\nout = df.with_columns(\n    by_1w=pl.col(\"d\").dt.truncate(\"1w\"),\n    by_7d=pl.col(\"d\").dt.truncate(\"7d\"),\n).with_columns(\n    by_1w_weekday=pl.col(\"by_1w\").dt.weekday(),\n    by_7d_weekday=pl.col(\"by_7d\").dt.weekday(),\n)\nfor row in out.to_dicts():\n    print(row)",
+   "output": "{'d': datetime.date(2024, 1, 10), 'by_1w': datetime.date(2024, 1, 8), 'by_7d': datetime.date(2024, 1, 4), 'by_1w_weekday': 1, 'by_7d_weekday': 4}"
+  },
+  {
+   "title": "with_time_unit is deprecated and reinterprets rather than converts",
+   "applies_to": [
+    "Expr.dt.with_time_unit"
+   ],
+   "trap": "`Expr.dt.with_time_unit` has been deprecated since 0.20.5. It does not modify the underlying integers; it only relabels the unit, so an `ns` column relabelled as `us` jumps tens of thousands of years. If you really need to fix a wrongly labelled unit, cast to `Int64` and then cast to the desired `pl.Datetime`/`pl.Duration`. If you want the same instant in another unit, use `Expr.dt.cast_time_unit`.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [datetime(2001, 1, 1)]}).with_columns(\n    pl.col(\"ts\").cast(pl.Datetime(\"ns\"))\n)\nout = df.select(\n    pl.col(\"ts\"),\n    relabel=pl.col(\"ts\").cast(pl.Int64).cast(pl.Datetime(\"us\")),\n    convert=pl.col(\"ts\").dt.cast_time_unit(\"us\"),\n)\nprint(out.schema)\nprint(out.select(pl.all().cast(pl.String)).rows())",
+   "output": "Schema({'ts': Datetime(time_unit='ns', time_zone=None), 'relabel': Datetime(time_unit='us', time_zone=None), 'convert': Datetime(time_unit='us', time_zone=None)})\n[('2001-01-01 00:00:00.000000000', '+32971-04-28 00:00:00.000000', '2001-01-01 00:00:00.000000')]"
+  },
+  {
+   "title": "total_* requires a Duration column, not a Datetime",
+   "applies_to": [
+    "Expr.dt.total_days",
+    "Expr.dt.total_seconds"
+   ],
+   "trap": "The `Expr.dt.total_*` methods extract totals from a `Duration` type. Calling them directly on a `Datetime` column raises an error instead of returning time since the epoch. First build a duration, by subtracting two datetimes or with `Expr.diff`; note that `Expr.diff` yields `null` on the first row. Also pass `fractional=True` if partial days matter.",
+   "example": "import polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame(\n    {\"start\": [datetime(2024, 1, 1)], \"end\": [datetime(2024, 1, 3, 12)]}\n)\ntry:\n    df.select(pl.col(\"end\").dt.total_days())\nexcept Exception as e:\n    print(repr(e).split(\"(\")[0])\n\ndur = pl.col(\"end\") - pl.col(\"start\")\nout = df.select(\n    days=dur.dt.total_days(),\n    days_frac=dur.dt.total_days(fractional=True),\n)\nprint(out.to_dicts())",
+   "output": "SchemaError\n[{'days': 2, 'days_frac': 2.5}]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows Int64 truncation (1 hour and 0 minutes) by default and Float64 fractions (1.5 and 0.983) with `fractional=True`, matching the docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows Friday as 5, Saturday as 6, Sunday as 7 and Monday as 1, and `>= 5` flags Friday as weekend, exactly as claimed.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows 2021-01-01 as ISO week 53 of 2020 and 2024-12-30 as week 1 of 2025, while `year` gives the calendar year, so the (year, week) collision is real.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The docstring says weekly buckets start on Monday and others on the epoch, and the output shows `'7d'` truncating to Thursday 2024-01-04 versus Monday 2024-01-08 for `'1w'`.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The deprecation version, the relabel-not-convert behaviour, the +32971 jump and the Int64 cast workaround all come from the docstring and output, and `cast_time_unit` preserves the instant in the output.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows a SchemaError on a Datetime column and 2 versus 2.5 on a subtracted duration, and the docstring examples show `diff` producing null on the first row.",
+   "trap": ""
+  }
+ ]
+}

@@ -23,7 +23,7 @@ La versión de `polars` queda fijada dentro del JSON. La exportación corre en l
 
 ## 3. Antes de escribir nada (NORTE R2)
 
-Hecho en el comentario de docker-lab#38. Lo que ya existe sobre Polars:
+Hecho por el mantenedor el 2026-10-23. Lo que ya existe sobre Polars:
 
 | Qué | Licencia | Qué cubre | ¿Catálogo del motor? |
 |---|---|---|---|

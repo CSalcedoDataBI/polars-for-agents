@@ -1,0 +1,141 @@
+{
+ "chunk": "Series-4",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Use ne_missing when nulls must compare as values; ne, lt and le return null for null inputs",
+   "applies_to": [
+    "Series.ne",
+    "Series.ne_missing",
+    "Series.lt",
+    "Series.le"
+   ],
+   "trap": "`Series.ne` and `Series.lt` propagate nulls: a comparison that involves a null gives null, not `True` or `False`. When that mask is passed to `Series.filter`, the null rows are dropped without any warning, so a null-vs-value mismatch is silently missed. Use `Series.ne_missing` when two nulls should count as equal and a null against a value should count as different, or handle nulls explicitly with `Series.fill_null`.",
+   "example": "import polars as pl\n\ns1 = pl.Series(\"a\", [333, 200, None, 5])\ns2 = pl.Series(\"a\", [100, 200, None, None])\n\nprint(s1.ne(s2).to_list())          # [True, False, None, None]\nprint(s1.ne_missing(s2).to_list())  # [True, False, False, True]\n\n# Row 3 (5 vs null) silently disappears with ne\nprint(s1.filter(s1.ne(s2)).to_list())\nprint(s1.filter(s1.ne_missing(s2)).to_list())\n\nprint(s1.lt(250).to_list())  # null stays null\n",
+   "output": "[True, False, None, None]\n[True, False, False, True]\n[333]\n[333, 5]\n[False, True, None, True]"
+  },
+  {
+   "title": "Series.len counts nulls; do not divide by it to get a mean",
+   "applies_to": [
+    "Series.len",
+    "Series.null_count",
+    "Series.mean"
+   ],
+   "trap": "`Series.len` returns the total number of elements, and null values count towards that total. Aggregations such as `Series.mean` skip nulls. So a hand-rolled `s.sum() / s.len()` gives a different, wrong answer whenever nulls are present. For the number of non-null values use `Series.count` or `s.len() - s.null_count()`, or simply call `Series.mean`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, None])\n\nprint(s.len())         # 3 (null counted)\nprint(s.count())       # 2 (non-null)\nprint(s.null_count())  # 1\n\nprint(s.sum() / s.len())    # 1.0  -- wrong\nprint(s.mean())             # 1.5  -- nulls ignored\nprint(s.sum() / s.count())  # 1.5\n",
+   "output": "3\n2\n1\n1.0\n1.5\n1.5"
+  },
+  {
+   "title": "Series.max and Series.min ignore NaN; use nan_max or nan_min to propagate it",
+   "applies_to": [
+    "Series.max",
+    "Series.min",
+    "Series.nan_max",
+    "Series.nan_min"
+   ],
+   "trap": "By default, Polars ignores NaN values when computing `Series.max` and `Series.min`. A float column containing NaN can therefore report a clean-looking extreme value. NumPy users expect the opposite, because `np.max` propagates NaN. If NaN should poison the result, use `Series.nan_max` or `Series.nan_min`. Otherwise, check `Series.is_nan` explicitly before trusting the extreme.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1.0, float(\"nan\"), 4.0])\n\nprint(s.max())      # 4.0 -- NaN ignored\nprint(s.min())      # 1.0\nprint(s.nan_max())  # nan -- NaN propagates\nprint(s.nan_min())  # nan\nprint(s.is_nan().any())  # True\n",
+   "output": "4.0\n1.0\nnan\nnan\nTrue"
+  },
+  {
+   "title": "Series.log is the natural log; log(0) gives -inf and negatives give NaN, not null",
+   "applies_to": [
+    "Series.log",
+    "Series.log10",
+    "Series.log1p"
+   ],
+   "trap": "The default base of `Series.log` is e, not 10, so code expecting a base-10 result gets silently wrong numbers. Use `Series.log10`, or pass the base explicitly as in `s.log(10)`. Invalid inputs also do not become null. In this example, zero gives `-inf` and a negative value gives NaN, so `Series.is_null` misses them; check with `Series.is_nan` and `Series.is_infinite` instead.",
+   "example": "import polars as pl\n\ns = pl.Series([100.0, 1.0, 0.0, -1.0])\n\nprint(s.log().to_list())    # natural log, not base 10\nprint(s.log10().to_list())  # [2.0, 0.0, -inf, nan]\nprint(s.log(10).to_list())\n\nr = s.log10()\nprint(r.is_null().sum())      # 0 -- nothing flagged as null\nprint(r.is_nan().sum())       # 1\nprint(r.is_infinite().sum())  # 1\n",
+   "output": "[4.605170185988092, 0.0, -inf, nan]\n[2.0, 0.0, -inf, nan]\n[2.0, 0.0, -inf, nan]\n0\n1\n1"
+  },
+  {
+   "title": "Series.is_sorted expects nulls first by default",
+   "applies_to": [
+    "Series.is_sorted"
+   ],
+   "trap": "`Series.is_sorted` defaults to `nulls_last=False`, which means it expects nulls at the start of the Series. An otherwise ascending Series with a trailing null, which is the pandas habit of putting NaN last, reports `False`. Pass `nulls_last=True` when nulls are at the end. Pass `descending=True` to check for descending order, because the default only checks ascending.",
+   "example": "import polars as pl\n\ns = pl.Series([1, 2, None])\nprint(s.is_sorted())                # False -- null expected first\nprint(s.is_sorted(nulls_last=True)) # True\n\nprint(s.sort().to_list())  # [None, 1, 2] -- default puts nulls first\nprint(s.sort().is_sorted())         # True\n\nt = pl.Series([3, 2, 1])\nprint(t.is_sorted())                # False\nprint(t.is_sorted(descending=True)) # True\n",
+   "output": "False\nTrue\n[None, 1, 2]\nTrue\nFalse\nTrue"
+  },
+  {
+   "title": "Series.is_unique is a method returning a Boolean mask, not the pandas bool property",
+   "applies_to": [
+    "Series.is_unique",
+    "Series.n_unique"
+   ],
+   "trap": "In pandas, `s.is_unique` is a property that returns a single bool. In Polars, `Series.is_unique` is a method that returns a Boolean Series with one value per element. Writing `if s.is_unique:` tests a bound method, which is always truthy, so the check silently passes. Writing `if s.is_unique():` raises instead, because a Series has no single truth value. To get one bool, use `s.is_unique().all()` or `s.n_unique() == s.len()`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, 2, 3])\n\nprint(bool(s.is_unique))  # True -- a bound method, not a check!\n\ntry:\n    if s.is_unique():\n        pass\nexcept TypeError:\n    print(\"TypeError\")\n\nprint(s.is_unique().to_list())  # [True, False, False, True]\nprint(s.is_unique().all())      # False\nprint(s.n_unique() == s.len())  # False\n",
+   "output": "True\nTypeError\n[True, False, False, True]\nFalse\nFalse"
+  },
+  {
+   "title": "Series.item() without an index raises unless the Series has exactly one element",
+   "applies_to": [
+    "Series.item"
+   ],
+   "trap": "`Series.item` called without an argument is not \"give me the first value\". It checks that the Series has length 1 and raises otherwise. Code like `s.filter(mask).item()` therefore breaks as soon as the filter matches zero rows or several rows. Pass an index, as in `s.item(0)` or `s.item(-1)`, when you want a specific position. Keep the no-argument form for cases where exactly one value is guaranteed.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [3, 1, 2])\n\ntry:\n    s.item()\nexcept ValueError:\n    print(\"ValueError\")\n\nprint(s.item(0))    # 3\nprint(s.item(-1))   # 2\nprint(s.filter(s > 2).item())  # 3 -- exactly one match\n\ntry:\n    s.filter(s > 1).item()  # two matches\nexcept ValueError:\n    print(\"ValueError\")\n",
+   "output": "ValueError\n3\n2\n3\nValueError"
+  },
+  {
+   "title": "Series.mode can return several values in unspecified order",
+   "applies_to": [
+    "Series.mode"
+   ],
+   "trap": "`Series.mode` returns a Series, not a scalar, and it contains every value that ties for most frequent. The default is `maintain_order=False`, so the order of those values is not guaranteed. Taking `s.mode()[0]` or `s.mode().item()` as \"the\" mode is therefore either non-deterministic or an error. Pass `maintain_order=True`, or sort the result, before picking an element, and handle the multi-value case explicitly.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [3, 1, 3, 1, 2])\n\nm = s.mode()\nprint(m.len())               # 2 -- a tie, not one value\nprint(m.sort().to_list())    # [1, 3] -- deterministic\nprint(s.mode(maintain_order=True).to_list())\n\ntry:\n    m.item()\nexcept ValueError:\n    print(\"ValueError\")\n",
+   "output": "2\n[1, 3]\n[3, 1]\nValueError"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The output shows null propagation for `ne` and `lt`, but nothing demonstrates `Series.le`, so the trap should not assert it.",
+   "trap": "`Series.ne` and `Series.lt` propagate nulls: a comparison that involves a null gives null, not `True` or `False`. When that mask is passed to `Series.filter`, the null rows are dropped without any warning, so a null-vs-value mismatch is silently missed. Use `Series.ne_missing` when two nulls should count as equal and a null against a value should count as different, or handle nulls explicitly with `Series.fill_null`."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The docstring and output confirm that `len` counts nulls while `mean` and `count` exclude them.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows NaN being ignored by `max` and `min` and propagated by `nan_max` and `nan_min`, and the docstring confirms the NumPy contrast.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "fix",
+   "reason": "The PostgreSQL `LOG` claim is not supported by the output or the docstrings; everything else is shown.",
+   "trap": "The default base of `Series.log` is e, not 10, so code expecting a base-10 result gets silently wrong numbers. Use `Series.log10`, or pass the base explicitly as in `s.log(10)`. Invalid inputs also do not become null. In this example, zero gives `-inf` and a negative value gives NaN, so `Series.is_null` misses them; check with `Series.is_nan` and `Series.is_infinite` instead."
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output confirms that the default expects nulls first, that `nulls_last=True` fixes the trailing-null case, and that `descending=True` is needed for descending order.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows the bound method is truthy, the call raises TypeError in an `if`, and `.all()` and `n_unique` give the single bool.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The docstring and output confirm that the no-argument `item` requires length 1 and raises ValueError otherwise.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows a tie that returns two values, `item` raising, and `maintain_order` affecting the order, consistent with the docstring.",
+   "trap": ""
+  }
+ ]
+}

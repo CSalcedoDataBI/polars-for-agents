@@ -1,0 +1,140 @@
+{
+ "chunk": "Expr.list-1",
+ "group": "Expr.list",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.list.get and Expr.list.gather raise on out-of-bounds indices by default",
+   "applies_to": [
+    "Expr.list.get",
+    "Expr.list.gather",
+    "Expr.list.first",
+    "Expr.list.last"
+   ],
+   "trap": "The `Expr.list.get` docstring prose says an out-of-bounds index returns `None`, but the default is `null_on_oob=False`, which raises an error. `Expr.list.gather` has the same default. A single empty or short sublist is enough to make the whole query fail. Pass `null_on_oob=True` when sublists can be shorter than the index. To take the first or last element, use `Expr.list.first` or `Expr.list.last`, which return null for empty lists.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[3, 2, 1], [], [1, 2]]})\ntry:\n    df.select(pl.col(\"a\").list.get(0))\nexcept Exception as e:\n    print(getattr(type(e), \"__name__\"))\ntry:\n    df.select(pl.col(\"a\").list.gather([0, 2]))\nexcept Exception as e:\n    print(getattr(type(e), \"__name__\"))\nout = df.select(\n    get=pl.col(\"a\").list.get(0, null_on_oob=True),\n    first=pl.col(\"a\").list.first(),\n    last=pl.col(\"a\").list.last(),\n    taken=pl.col(\"a\").list.gather([0, 2], null_on_oob=True),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "ComputeError\nOutOfBoundsError\n{'get': [3, None, 1], 'first': [3, None, 1], 'last': [1, None, 2], 'taken': [[3, 1], [None, None], [1, None]]}"
+  },
+  {
+   "title": "Expr.list.len counts null elements",
+   "applies_to": [
+    "Expr.list.len",
+    "Expr.list.drop_nulls"
+   ],
+   "trap": "`Expr.list.len` returns the number of elements in each sublist, and null elements count toward that total. If you expect a count of non-null values, the result is silently too high. To count only non-null elements, drop the nulls first with `Expr.list.drop_nulls` and then call `Expr.list.len`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2, None], [None], [5]]})\nout = df.with_columns(\n    len_with_nulls=pl.col(\"a\").list.len(),\n    non_null=pl.col(\"a\").list.drop_nulls().list.len(),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "{'a': [[1, 2, None], [None], [5]], 'len_with_nulls': [3, 1, 1], 'non_null': [2, 0, 1]}"
+  },
+  {
+   "title": "Expr.list.all is True and Expr.list.any is False for empty or all-null lists",
+   "applies_to": [
+    "Expr.list.all",
+    "Expr.list.any"
+   ],
+   "trap": "When a row has no non-null elements, `Expr.list.all` returns `True` and `Expr.list.any` returns `False`. This applies to both `[]` and `[null]`, while a null list gives null. A filter such as \"every check passed\" therefore keeps rows that ran no checks at all. If an empty or all-null list should not count as passing, also require at least one non-null element.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[True], [False, True], [None], [], None]})\nhas_values = pl.col(\"a\").list.drop_nulls().list.len() > 0\nout = df.with_columns(\n    naive_all=pl.col(\"a\").list.all(),\n    strict_all=pl.col(\"a\").list.all() & has_values,\n    any=pl.col(\"a\").list.any(),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "{'a': [[True], [False, True], [None], [], None], 'naive_all': [True, False, True, True, None], 'strict_all': [True, False, False, False, None], 'any': [True, True, False, False, None]}"
+  },
+  {
+   "title": "Expr.list.join needs String elements and silently skips nulls",
+   "applies_to": [
+    "Expr.list.join"
+   ],
+   "trap": "`Expr.list.join` errors if the list's inner type is not `String`. Cast first, for example with `Expr.cast(pl.List(pl.String))`. The default `ignore_nulls=True` silently drops null elements, so `[1, null, 3]` becomes `\"1-3\"` with no trace of the missing value. Pass `ignore_nulls=False` if a sublist containing a null should produce a null string.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, None, 3], [4, 5]]})\ntry:\n    df.select(pl.col(\"a\").list.join(\"-\"))\nexcept Exception as e:\n    print(getattr(type(e), \"__name__\"))\ns = pl.col(\"a\").cast(pl.List(pl.String))\nout = df.select(\n    skip_nulls=s.list.join(\"-\"),\n    propagate=s.list.join(\"-\", ignore_nulls=False),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "InvalidOperationError\n{'skip_nulls': ['1-3', '4-5'], 'propagate': [None, '4-5']}"
+  },
+  {
+   "title": "List set operations match nulls as values and do not sort the result",
+   "applies_to": [
+    "Expr.list.set_difference",
+    "Expr.list.set_intersection",
+    "Expr.list.set_symmetric_difference",
+    "Expr.list.set_union"
+   ],
+   "trap": "The list set operations treat null as an ordinary value. A null on both sides is removed by `Expr.list.set_difference` and kept by `Expr.list.set_intersection`. The output is not sorted, so `Expr.list.set_symmetric_difference` can return `[8, 5, 7]`. Do not compare results by position or against a sorted literal. Apply `Expr.list.sort` when order matters.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[None, 3], [5, 6, 7]], \"b\": [[3, 4, None], [6, 8]]})\nout = df.with_columns(\n    diff=pl.col(\"a\").list.set_difference(\"b\"),\n    inter=pl.col(\"a\").list.set_intersection(\"b\"),\n    sdiff=pl.col(\"b\").list.set_symmetric_difference(\"a\"),\n    sdiff_sorted=pl.col(\"b\").list.set_symmetric_difference(\"a\").list.sort(),\n)\nprint(out.to_dict(as_series=False))",
+   "output": "{'a': [[None, 3], [5, 6, 7]], 'b': [[3, 4, None], [6, 8]], 'diff': [[], [5, 7]], 'inter': [[None, 3], [6]], 'sdiff': [[4], [8, 5, 7]], 'sdiff_sorted': [[4], [5, 7, 8]]}"
+  },
+  {
+   "title": "Use Expr.list.agg, not Expr.list.eval, to get a scalar per row",
+   "applies_to": [
+    "Expr.list.eval",
+    "Expr.list.agg"
+   ],
+   "trap": "`Expr.list.eval` does not automatically explode its result. An aggregation such as `pl.element().null_count()` inside it therefore returns a `List(UInt32)` column of one-element lists like `[[1], [0], [2]]` instead of a scalar column. Use `Expr.list.agg` when you want one scalar per row, because it automatically explodes the aggregated result and yields a plain `UInt32` column.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, None], [42, 13], [None, None]]})\nout = df.with_columns(\n    via_eval=pl.col(\"a\").list.eval(pl.element().null_count()),\n    via_agg=pl.col(\"a\").list.agg(pl.element().null_count()),\n)\nprint(out.to_dict(as_series=False))\nprint(out.schema)",
+   "output": "{'a': [[1, None], [42, 13], [None, None]], 'via_eval': [[1], [0], [2]], 'via_agg': [1, 0, 2]}\nSchema({'a': List(Int64), 'via_eval': List(UInt32), 'via_agg': UInt32})"
+  },
+  {
+   "title": "Expr.list.explode turns empty and null lists into null rows",
+   "applies_to": [
+    "Expr.list.explode"
+   ],
+   "trap": "By default, `Expr.list.explode` uses `empty_as_null=True` and `keep_nulls=True`. An empty list and a null list each produce one null row instead of disappearing. Row counts and null counts after exploding are therefore higher than you might expect. Pass `empty_as_null=False` and `keep_nulls=False` to get only the actual elements.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2], [], None]})\ndefault = df.select(pl.col(\"a\").list.explode())\nonly_values = df.select(pl.col(\"a\").list.explode(empty_as_null=False, keep_nulls=False))\nprint(default.to_dict(as_series=False))\nprint(default.height, only_values.height)\nprint(only_values.to_dict(as_series=False))",
+   "output": "{'a': [1, 2, None, None]}\n4 2\n{'a': [1, 2]}"
+  },
+  {
+   "title": "Expr.list.item errors unless every sublist has exactly one value",
+   "applies_to": [
+    "Expr.list.item",
+    "Expr.list.first"
+   ],
+   "trap": "`Expr.list.item` raises an error when any sublist does not have exactly one element. `allow_empty=True` only turns empty lists into null, and sublists with two or more elements still raise. Use `Expr.list.item` only when one element per list is a real invariant you want enforced. If you just want the leading value, use `Expr.list.first`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[3, 2], [1], []]})\ntry:\n    df.select(pl.col(\"a\").list.item(allow_empty=True))\nexcept Exception as e:\n    print(getattr(type(e), \"__name__\"))\nok = pl.DataFrame({\"a\": [[7], []]})\nprint(ok.select(pl.col(\"a\").list.item(allow_empty=True)).to_dict(as_series=False))\nprint(df.select(first=pl.col(\"a\").list.first()).to_dict(as_series=False))",
+   "output": "ComputeError\n{'a': [7, None]}\n{'first': [3, 1, None]}"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows both default calls raising, and `null_on_oob=True`, `Expr.list.first` and `Expr.list.last` returning null for the empty list, matching the docstring contradiction described.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "Both the docstring and the output confirm that nulls count toward `Expr.list.len`, and `Expr.list.drop_nulls` before `Expr.list.len` gives non-null counts.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "Both the docstring notes and the output confirm True/False for `[]` and `[null]` and null for a null list, and the strict variant works as described.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows `InvalidOperationError` for an integer inner type, `'1-3'` under the default and `None` with `ignore_nulls=False`, matching the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output and docstrings show nulls matched as values in difference and intersection, the unsorted `[8, 5, 7]` result, and the fix via sort.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "fix",
+   "reason": "The claim that later arithmetic or comparisons fail or behave unexpectedly is not demonstrated by the output or docstrings.",
+   "trap": "`Expr.list.eval` does not automatically explode its result. An aggregation such as `pl.element().null_count()` inside it therefore returns a `List(UInt32)` column of one-element lists like `[[1], [0], [2]]` instead of a scalar column. Use `Expr.list.agg` when you want one scalar per row, because it automatically explodes the aggregated result and yields a plain `UInt32` column."
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows 4 rows by default with nulls for the empty and null lists, and 2 rows with both flags set to False, matching the signature defaults.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows `ComputeError` with `allow_empty=True` when a two-element list is present, success when lists have only one or zero elements, and `Expr.list.first` as the lenient alternative.",
+   "trap": ""
+  }
+ ]
+}

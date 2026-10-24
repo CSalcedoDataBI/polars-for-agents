@@ -1,0 +1,133 @@
+{
+ "chunk": "Expr-1",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "`Expr.cast` raises by default; `strict=False` silently turns bad values into nulls",
+   "applies_to": [
+    "Expr.cast"
+   ],
+   "trap": "`Expr.cast` defaults to `strict=True`, so one unparsable string or one out-of-range integer makes the whole query raise. Passing `strict=False` turns every invalid value into null without any warning, so bad data can disappear quietly. Check `Expr.null_count` after a non-strict cast. Integer overflow counts as invalid by default; pass `wrap_numerical=True` only if you really want overflowing values to wrap around.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": [\"1\", \"2\", \"x\"], \"n\": [10, 200, 300]})\ntry:\n    df.select(pl.col(\"s\").cast(pl.Int64))\nexcept Exception as e:\n    print(type(e))\nloose = df.select(pl.col(\"s\").cast(pl.Int64, strict=False))\nprint(loose.to_dict(as_series=False))\nprint(loose.select(pl.col(\"s\").null_count()).item())\ntry:\n    df.select(pl.col(\"n\").cast(pl.UInt8))\nexcept Exception as e:\n    print(type(e))\nwrapped = df.select(pl.col(\"n\").cast(pl.UInt8, wrap_numerical=True))\nprint(wrapped.to_dict(as_series=False))\n",
+   "output": "<class 'polars.exceptions.InvalidOperationError'>\n{'s': [1, 2, None]}\n1\n<class 'polars.exceptions.InvalidOperationError'>\n{'n': [10, 200, 44]}"
+  },
+  {
+   "title": "`Expr.all` and `Expr.any` ignore nulls unless `ignore_nulls=False`",
+   "applies_to": [
+    "Expr.all",
+    "Expr.any"
+   ],
+   "trap": "By default (`ignore_nulls=True`), nulls are skipped. A Boolean column like `[null, true]` reports `Expr.all` as `true`, and `[null, false]` reports `Expr.any` as `false`. A column with no non-null values gives `true` for `Expr.all` and `false` for `Expr.any`. If a null should mean \"unknown\", pass `ignore_nulls=False` to get Kleene logic, which returns null in those cases. Do not confuse `Expr.all` with `pl.all`, which selects every column.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"c\": [None, True], \"d\": [None, False]})\nout = df.select(\n    all_default=pl.col(\"c\").all(),\n    all_kleene=pl.col(\"c\").all(ignore_nulls=False),\n    any_default=pl.col(\"d\").any(),\n    any_kleene=pl.col(\"d\").any(ignore_nulls=False),\n)\nprint(out.to_dicts())\n",
+   "output": "[{'all_default': True, 'all_kleene': None, 'any_default': False, 'any_kleene': None}]"
+  },
+  {
+   "title": "Combine conditions with `&` or `Expr.and_`, never Python `and`, and remember integers go bitwise",
+   "applies_to": [
+    "Expr.and_"
+   ],
+   "trap": "Python's `and` keyword asks for the truth value of an expression, and that raises a `TypeError`. Combine predicates with `&` or with `Expr.and_`, and wrap each comparison in parentheses. On integer columns, `&` and `Expr.and_` do a bitwise AND rather than a logical one; for example, `5` AND `-9` is `5`. Make sure both operands are Boolean comparisons when you mean a logical test.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [5, 6, 7], \"z\": [-9, 2, 7]})\ntry:\n    df.filter(pl.col(\"x\") > 5 and pl.col(\"z\") > 0)\nexcept Exception as e:\n    print(type(e))\nprint(df.filter((pl.col(\"x\") > 5) & (pl.col(\"z\") > 0)).rows())\nprint(df.filter((pl.col(\"x\") > 5).and_(pl.col(\"z\") > 0)).rows())\nprint(df.select(bitwise=pl.col(\"x\").and_(pl.col(\"z\"))).to_dict(as_series=False))\n",
+   "output": "<class 'TypeError'>\n[(6, 2), (7, 7)]\n[(6, 2), (7, 7)]\n{'bitwise': [5, 2, 7]}"
+  },
+  {
+   "title": "`Expr.arg_sort` puts nulls first by default",
+   "applies_to": [
+    "Expr.arg_sort"
+   ],
+   "trap": "`Expr.arg_sort` defaults to `nulls_last=False`, so the positions of null values come before everything else, even when `descending=True`. Code that assumes the first position points at the smallest (or largest) value will pick a null row instead. Pass `nulls_last=True` when you use `Expr.arg_sort` with `Expr.gather` to reorder or select rows.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [3, None, 1], \"name\": [\"a\", \"b\", \"c\"]})\nprint(df.select(pl.col(\"v\").arg_sort()).to_dict(as_series=False))\nprint(df.select(pl.col(\"v\").arg_sort(nulls_last=True)).to_dict(as_series=False))\nfirst = df.select(pl.col(\"name\").gather(pl.col(\"v\").arg_sort(descending=True)))\nprint(first.to_dict(as_series=False))\nfixed = df.select(\n    pl.col(\"name\").gather(pl.col(\"v\").arg_sort(descending=True, nulls_last=True))\n)\nprint(fixed.to_dict(as_series=False))\n",
+   "output": "{'v': [1, 2, 0]}\n{'v': [2, 0, 1]}\n{'name': ['b', 'a', 'c']}\n{'name': ['a', 'c', 'b']}"
+  },
+  {
+   "title": "`Expr.arg_max` and `Expr.arg_min` return a 0-based position, not an index label",
+   "applies_to": [
+    "Expr.arg_max",
+    "Expr.arg_min"
+   ],
+   "trap": "Polars has no index, so `Expr.arg_max` and `Expr.arg_min` return an integer row position, not a label. Inside `DataFrame.group_by` aggregations, the position is counted within each group, not across the whole frame. To fetch the matching value from another column, pass the position to `Expr.gather`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"city\": [\"A\", \"B\", \"C\"], \"temp\": [20, 30, 10]})\npos = df.select(pl.col(\"temp\").arg_max(), argmin=pl.col(\"temp\").arg_min())\nprint(pos.to_dict(as_series=False))\nnames = df.select(\n    hottest=pl.col(\"city\").gather(pl.col(\"temp\").arg_max()),\n    coldest=pl.col(\"city\").gather(pl.col(\"temp\").arg_min()),\n)\nprint(names.to_dict(as_series=False))\ng = pl.DataFrame({\"k\": [\"x\", \"x\", \"y\", \"y\"], \"v\": [1, 5, 7, 2]})\nper_group = g.group_by(\"k\", maintain_order=True).agg(pl.col(\"v\").arg_max())\nprint(per_group.to_dict(as_series=False))\n",
+   "output": "{'temp': [1], 'argmin': [2]}\n{'hottest': ['B'], 'coldest': ['C']}\n{'k': ['x', 'y'], 'v': [1, 0]}"
+  },
+  {
+   "title": "`Expr.bottom_k` output is unordered and never prefers nulls",
+   "applies_to": [
+    "Expr.bottom_k",
+    "Expr.bottom_k_by"
+   ],
+   "trap": "`Expr.bottom_k` and `Expr.bottom_k_by` (like `Expr.top_k`) do not guarantee any order in their output, so chain `Expr.sort` if you need the result ordered. They always prefer non-null elements over nulls. `Expr.sort` followed by `Expr.head` behaves differently: it puts nulls first by default, so the two approaches can return different values.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"value\": [1, 98, None, 2, 3, 99, 4]})\nprint(df.select(pl.col(\"value\").bottom_k(3).sort()).to_dict(as_series=False))\nprint(df.select(pl.col(\"value\").sort().head(3)).to_dict(as_series=False))\ntop = df.select(pl.col(\"value\").top_k(3).sort(descending=True))\nprint(top.to_dict(as_series=False))\ndf2 = pl.DataFrame({\"a\": [3, 1, 2], \"b\": [\"x\", \"y\", \"z\"]})\nprint(df2.select(pl.col(\"b\").bottom_k_by(\"a\", 2).sort()).to_dict(as_series=False))\n",
+   "output": "{'value': [1, 2, 3]}\n{'value': [None, 1, 2]}\n{'value': [99, 98, 4]}\n{'b': ['y', 'z']}"
+  },
+  {
+   "title": "`Expr.arg_true` changes the row count and cannot be added as a column",
+   "applies_to": [
+    "Expr.arg_true"
+   ],
+   "trap": "`Expr.arg_true` returns only the positions where the condition is true, so its length usually differs from the frame's height. Putting it in `DataFrame.with_columns`, or next to other full-length expressions, raises an error. Use it on its own in `DataFrame.select`. To keep row positions alongside the data, use `DataFrame.with_row_index` followed by `DataFrame.filter`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 1, 2, 1]})\ntry:\n    df.with_columns(idx=(pl.col(\"a\") == 1).arg_true())\nexcept Exception as e:\n    print(type(e))\nout = df.select((pl.col(\"a\") == 1).arg_true().alias(\"idx\"))\nprint(out.to_dict(as_series=False))\nkept = df.with_row_index().filter(pl.col(\"a\") == 1)\nprint(kept.to_dict(as_series=False))\n",
+   "output": "<class 'polars.exceptions.ShapeError'>\n{'idx': [0, 1, 3]}\n{'index': [0, 1, 3], 'a': [1, 1, 1]}"
+  },
+  {
+   "title": "`Expr.agg_groups` is deprecated: aggregate a row index instead",
+   "applies_to": [
+    "Expr.agg_groups"
+   ],
+   "trap": "`Expr.agg_groups` is deprecated since 1.35, will be removed in Polars 2.0, and should only be used in an aggregation context. The documented replacement is `df.with_row_index().group_by(...).agg(pl.col(\"index\"))`, which produces the same per-group lists of row positions. Call `DataFrame.with_row_index` before any filtering if you want the original row numbers. The docstring's recommended form passes `maintain_order=True` to `DataFrame.group_by`; do the same if the order of the groups matters.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame(\n    {\"group\": [\"one\", \"two\", \"one\", \"two\"], \"value\": [94, 97, 95, 99]}\n)\nout = (\n    df.with_row_index()\n    .group_by(\"group\", maintain_order=True)\n    .agg(pl.col(\"index\"))\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'group': ['one', 'two'], 'index': [[0, 2], [1, 3]]}"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output confirms that strict casts raise `InvalidOperationError`, that `strict=False` yields a null counted by `null_count`, and that `wrap_numerical=True` wraps 300 to 44.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The default and Kleene results in the output match the trap, and the all-null behaviour and the `pl.all` distinction come straight from the docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows Python `and` raising `TypeError`, `&` and `and_` filtering correctly, and the bitwise result 5 AND -9 = 5, which matches the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows the null position first by default and also with `descending=True` (the gather picks 'b'), and `nulls_last=True` fixes it.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The output shows integer positions, a correct gather by position, and per-group positions (1 and 0) inside `group_by`.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstrings state the unordered output and the preference for non-nulls, and the output shows `sort().head(3)` returning a null where `bottom_k` does not.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows `ShapeError` in `with_columns`, success in `select`, and the `with_row_index` + `filter` alternative producing the same positions.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "fix",
+   "reason": "The claim that `DataFrame.group_by` does not keep order by default is not shown by the output or the docstrings, so it should be reworded to only recommend `maintain_order=True` as the docstring does.",
+   "trap": "`Expr.agg_groups` is deprecated since 1.35, will be removed in Polars 2.0, and should only be used in an aggregation context. The documented replacement is `df.with_row_index().group_by(...).agg(pl.col(\"index\"))`, which produces the same per-group lists of row positions. Call `DataFrame.with_row_index` before any filtering if you want the original row numbers. The docstring's recommended form passes `maintain_order=True` to `DataFrame.group_by`; do the same if the order of the groups matters."
+  }
+ ]
+}

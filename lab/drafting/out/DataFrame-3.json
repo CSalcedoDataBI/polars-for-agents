@@ -1,0 +1,133 @@
+{
+ "chunk": "DataFrame-3",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "DataFrame.remove keeps rows whose predicate is null, so it is not the mirror of filter",
+   "applies_to": [
+    "DataFrame.remove",
+    "DataFrame.filter"
+   ],
+   "trap": "`DataFrame.remove` drops only rows where the predicate is exactly True. Rows where it evaluates to `null` are **retained**, and any comparison with a null value yields `null`. So `df.remove(pred)` and `df.filter(~pred)` give different results when the column contains nulls. If you want null rows gone too, add `| pl.col(c).is_null()` to the predicate, or fill the nulls first.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 2, 3], \"bar\": [5, None, 1]})\n\n# remove() keeps id=2 because (null >= 5) is null, not True\nprint(df.remove(pl.col(\"bar\") >= 5)[\"id\"].to_list())  # [2, 3]\n\n# filter(~pred) drops the null row instead\nprint(df.filter(~(pl.col(\"bar\") >= 5))[\"id\"].to_list())  # [3]\n\n# handle nulls explicitly to get the intended result\nfixed = df.remove((pl.col(\"bar\") >= 5) | pl.col(\"bar\").is_null())\nprint(fixed[\"id\"].to_list())  # [3]\n",
+   "output": "[2, 3]\n[3]\n[3]"
+  },
+  {
+   "title": "DataFrame.sort puts nulls first by default and does not guarantee a stable order for ties",
+   "applies_to": [
+    "DataFrame.sort"
+   ],
+   "trap": "`DataFrame.sort` has `nulls_last=False` by default, so nulls come out at the **top**. pandas habits expect missing values at the end. Pass `nulls_last=True` (a bool, or one bool per sort column) when you want them at the end. Also, `maintain_order=False` is the default, so the original order of tied rows is not guaranteed. Pass `maintain_order=True` when a later step depends on stable ordering.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [2, None, 1]})\nprint(df.sort(\"a\")[\"a\"].to_list())  # [None, 1, 2]\nprint(df.sort(\"a\", nulls_last=True)[\"a\"].to_list())  # [1, 2, None]\nprint(df.sort(\"a\", descending=True, nulls_last=True)[\"a\"].to_list())  # [2, 1, None]\n\nties = pl.DataFrame({\"k\": [1, 0, 1, 0], \"pos\": [0, 1, 2, 3]})\n# stable sort: tied rows keep their original relative order\nprint(ties.sort(\"k\", maintain_order=True)[\"pos\"].to_list())  # [1, 3, 0, 2]\n",
+   "output": "[None, 1, 2]\n[1, 2, None]\n[2, 1, None]\n[1, 3, 0, 2]"
+  },
+  {
+   "title": "DataFrame.replace_column mutates the frame in place",
+   "applies_to": [
+    "DataFrame.replace_column",
+    "DataFrame.with_columns"
+   ],
+   "trap": "Almost every DataFrame method returns a new frame, but the docstring of `DataFrame.replace_column` states that it operates **in place**. The original `df` is changed even if you assign the result to a new variable. Any other reference to that frame, such as a cached input or a function argument, sees the change too. Prefer `DataFrame.with_columns` with a same-named Series or expression, which returns a new frame. Alternatively, call `DataFrame.clone` first if you really need positional replacement.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\nbackup = df.clone()\n\nout = df.replace_column(0, pl.Series(\"z\", [9, 9]))\nprint(df.columns)  # ['z', 'b']  original df was mutated\nprint(out.columns)  # ['z', 'b']\n\n# non-mutating alternative: replace by name, get a new frame\nsafe = backup.with_columns(pl.Series(\"a\", [9, 9]))\nprint(backup[\"a\"].to_list())  # [1, 2]  untouched\nprint(safe[\"a\"].to_list())  # [9, 9]\n",
+   "output": "['z', 'b']\n['z', 'b']\n[1, 2]\n[9, 9]"
+  },
+  {
+   "title": "DataFrame.slice takes (offset, length), not (start, stop)",
+   "applies_to": [
+    "DataFrame.slice",
+    "DataFrame.tail"
+   ],
+   "trap": "`DataFrame.slice(offset, length)` uses a **length** as its second argument. Code translated from Python slicing or pandas `iloc[start:stop]` that passes a stop index returns too many rows. Compute `stop - start` for the length. Leaving `length=None` takes everything from the offset onward, and negative offsets count from the end. Also, `DataFrame.tail` with a negative `n` returns all rows *except* the first `abs(n)`, not the last `n`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"i\": [0, 1, 2, 3, 4]})\n\nprint(df.slice(1, 3)[\"i\"].to_list())  # [1, 2, 3]  3 rows, not rows 1..2\n\nstart, stop = 1, 3\nprint(df.slice(start, stop - start)[\"i\"].to_list())  # [1, 2]\n\nprint(df.slice(-2)[\"i\"].to_list())  # [3, 4]\nprint(df.tail(-3)[\"i\"].to_list())  # [3, 4]  all except first 3\n",
+   "output": "[1, 2, 3]\n[1, 2]\n[3, 4]\n[3, 4]"
+  },
+  {
+   "title": "DataFrame.rows_by_key with unique=True silently keeps only the last duplicate",
+   "applies_to": [
+    "DataFrame.rows_by_key"
+   ],
+   "trap": "By default `DataFrame.rows_by_key` groups rows into a list per key, and the key column is omitted from the values (`include_key=False`). Passing `unique=True` gives a 1:1 mapping. If the key is not actually unique, it **silently returns the last row** for that key instead of raising. Verify uniqueness first, for example by comparing `Series.n_unique` to `DataFrame.height`, before relying on `unique=True`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [\"a\", \"b\", \"b\", \"a\"], \"y\": [1, 2, 3, 4]})\n\nprint(dict(df.rows_by_key(\"x\")))  # lists of rows per key, key omitted\nprint(df.rows_by_key(\"x\", unique=True))  # only the LAST row per key survives\n\nprint(df[\"x\"].n_unique() == df.height)  # False -> unique=True would lose data\nprint(dict(df.rows_by_key(\"x\", named=True, include_key=True)))\n",
+   "output": "{'a': [(1,), (4,)], 'b': [(2,), (3,)]}\n{'a': (4,), 'b': (3,)}\nFalse\n{'a': [{'x': 'a', 'y': 1}, {'x': 'a', 'y': 4}], 'b': [{'x': 'b', 'y': 2}, {'x': 'b', 'y': 3}]}"
+  },
+  {
+   "title": "DataFrame.rolling windows are right-closed (t - period, t] and need a sorted index",
+   "applies_to": [
+    "DataFrame.rolling"
+   ],
+   "trap": "By default each `DataFrame.rolling` window is `(t - period, t]` because `closed='right'`. The value exactly `period` before `t` is **excluded**, which surprises anyone expecting an inclusive lookback. Pass `closed=\"both\"` (or `\"left\"`/`\"none\"`) to choose explicitly. The `index_column` must be sorted ascending, or sorted within each group when `group_by` is used. The old `by` parameter was renamed to `group_by`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"t\": [1, 2, 3, 4], \"v\": [1, 10, 100, 1000]})\n\nright = df.rolling(\"t\", period=\"2i\").agg(pl.col(\"v\").sum().alias(\"s\"))\nboth = df.rolling(\"t\", period=\"2i\", closed=\"both\").agg(\n    pl.col(\"v\").sum().alias(\"s\")\n)\n\nprint(right[\"s\"].to_list())  # [1, 11, 110, 1100]  window (t-2, t]\nprint(both[\"s\"].to_list())  # [1, 11, 111, 1110]  window [t-2, t]\n",
+   "output": "[1, 11, 110, 1100]\n[1, 11, 111, 1110]"
+  },
+  {
+   "title": "DataFrame.sum_horizontal silently ignores nulls, unlike `a + b`",
+   "applies_to": [
+    "DataFrame.sum_horizontal"
+   ],
+   "trap": "`DataFrame.sum_horizontal` defaults to `ignore_nulls=True`, so a row containing a null still gets the sum of its remaining values. In contrast, `pl.col(\"a\") + pl.col(\"b\")` returns null for that row. Pass `ignore_nulls=False` if a missing input should make the total missing. The method returns a `Series` named `\"sum\"`, not a DataFrame, so attach it with `DataFrame.with_columns` under a proper name.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None], \"b\": [10, 20]})\n\nprint(df.sum_horizontal().to_list())  # [11, 20]  null treated as absent\nprint(df.sum_horizontal(ignore_nulls=False).to_list())  # [11, None]\nprint(df.select((pl.col(\"a\") + pl.col(\"b\")).alias(\"t\"))[\"t\"].to_list())  # [11, None]\n\ns = df.sum_horizontal()\nprint(isinstance(s, pl.Series), s.name)  # True sum\nprint(df.with_columns(total=df.sum_horizontal(ignore_nulls=False)).to_dicts())\n",
+   "output": "[11, 20]\n[11, None]\n[11, None]\nTrue sum\n[{'a': 1, 'b': 10, 'total': 11}, {'a': None, 'b': 20, 'total': None}]"
+  },
+  {
+   "title": "DataFrame.quantile defaults to 'nearest' interpolation, not linear",
+   "applies_to": [
+    "DataFrame.quantile"
+   ],
+   "trap": "`DataFrame.quantile` uses `interpolation='nearest'` by default, so it returns an existing data value instead of interpolating between neighbours. If you expect linear interpolation, a median computed with `DataFrame.quantile(0.5)` can differ from what you expect. Pass `interpolation=\"linear\"` explicitly to interpolate. Non-numeric columns are not dropped: they come back as `null` in the result row.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 2, 3, 4], \"s\": [\"a\", \"b\", \"c\", \"d\"]})\n\nnearest = df.quantile(0.5)  # default interpolation='nearest'\nlinear = df.quantile(0.5, interpolation=\"linear\")\n\nprint(nearest.to_dicts())  # x is an existing value, s is None\nprint(linear[\"x\"].item())  # 2.5\nprint(nearest[\"x\"].item() == linear[\"x\"].item())  # False\n",
+   "output": "[{'x': 3.0, 's': None}]\n2.5\nFalse"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output and the `DataFrame.remove` docstring confirm that null-predicate rows are retained, while `filter(~pred)` drops them.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows nulls first by default and the signature shows `maintain_order=False`, so every claim is supported.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The docstring says the operation is in place and the output shows the original `df` columns changed.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm (offset, length) semantics, negative offsets, `length=None`, and negative `n` in `tail`.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The docstring and output both show that `unique=True` returns the last row for a duplicated key without raising.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output demonstrates right-closed windows and the docstring confirms the sorting requirement and the `by` to `group_by` rename.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output shows that nulls are ignored by default, null propagates with `ignore_nulls=False` and with `+`, and the result is a Series named `sum`.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "keep",
+   "reason": "The output shows 'nearest' returning 3.0 versus 2.5 for linear, and the string column coming back as null.",
+   "trap": ""
+  }
+ ]
+}

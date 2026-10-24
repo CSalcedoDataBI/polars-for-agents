@@ -1,0 +1,122 @@
+{
+ "chunk": "Expr-2",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "NaN and null are different values, and each method only handles one of them",
+   "applies_to": [
+    "Expr.drop_nans",
+    "Expr.drop_nulls",
+    "Expr.fill_nan"
+   ],
+   "trap": "In pandas, NaN *is* the missing value, so `dropna`/`fillna` remove both. In Polars, a missing value is `null`, while `NaN` is an ordinary float value. `Expr.drop_nulls` keeps `NaN`, `Expr.drop_nans` keeps `null`, and `Expr.fill_nan` leaves `null` untouched. To clean both, first convert one into the other (for example `Expr.fill_nan(None)`), then use the null tools such as `Expr.drop_nulls` or `Expr.fill_null`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1.0, None, 3.0, float(\"nan\")]})\n\n# Wrong: each call removes or fills only one kind of missing value\nprint(df.select(pl.col(\"a\").drop_nulls()).to_series().to_list())  # NaN survives\nprint(df.select(pl.col(\"a\").drop_nans()).to_series().to_list())  # null survives\nprint(df.select(pl.col(\"a\").fill_nan(0.0)).to_series().to_list())  # null survives\n\n# Right: turn NaN into null, then handle nulls once\nprint(df.select(pl.col(\"a\").fill_nan(None).drop_nulls()).to_series().to_list())\nprint(df.select(pl.col(\"a\").fill_nan(None).fill_null(0.0)).to_series().to_list())\n",
+   "output": "[1.0, 3.0, nan]\n[1.0, None, 3.0]\n[1.0, None, 3.0, 0.0]\n[1.0, 3.0]\n[1.0, 0.0, 3.0, 0.0]"
+  },
+  {
+   "title": "Use eq_missing for null-safe equality; plain eq propagates null and treats NaN == NaN as true",
+   "applies_to": [
+    "Expr.eq",
+    "Expr.eq_missing"
+   ],
+   "trap": "`Expr.eq` (and `==`) returns `null` whenever either side is null, the same as SQL. A filter on that result therefore silently drops rows where both sides are null. Polars also returns `true` for `NaN == NaN`, which differs from IEEE and NumPy. If two nulls should count as equal (for example when comparing old and new versions of a column), use `Expr.eq_missing`, which always returns `true`/`false`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\n    \"x\": [1.0, float(\"nan\"), None, None],\n    \"y\": [1.0, float(\"nan\"), 5.0, None],\n})\nout = df.select(\n    eq=pl.col(\"x\").eq(pl.col(\"y\")),\n    eq_missing=pl.col(\"x\").eq_missing(pl.col(\"y\")),\n)\nprint(out.to_dict(as_series=False))\n\n# Filtering with eq drops the null/null row; eq_missing keeps it\nprint(df.filter(pl.col(\"x\").eq(pl.col(\"y\"))).height)  # 2\nprint(df.filter(pl.col(\"x\").eq_missing(pl.col(\"y\"))).height)  # 3\n",
+   "output": "{'eq': [True, True, None, None], 'eq_missing': [True, True, False, True]}\n2\n3"
+  },
+  {
+   "title": "count and cum_count skip nulls, so they are not row counts or row numbers",
+   "applies_to": [
+    "Expr.count",
+    "Expr.cum_count"
+   ],
+   "trap": "`Expr.count` returns the number of non-null values, unlike SQL `COUNT(*)`; use `Expr.len` or `pl.len` for the row count. `Expr.cum_count` is a cumulative count of the non-null values, so it does not advance at null rows. It is not pandas `groupby().cumcount()` (a 0-based row number). For a per-group row number, use `pl.int_range(pl.len()).over(...)`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"a\", \"b\"], \"v\": [1, None, 3, 4]})\n\nprint(df.select(\n    count=pl.col(\"v\").count(),  # 3: nulls skipped\n    length=pl.col(\"v\").len(),  # 4: all rows\n    rows=pl.len(),\n).to_dict(as_series=False))\n\nout = df.select(\n    cum_count=pl.col(\"v\").cum_count().over(\"g\"),  # 1, 1, 2, 1\n    row_nr=pl.int_range(pl.len()).over(\"g\"),  # 0, 1, 2, 0\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "{'count': [3], 'length': [4], 'rows': [4]}\n{'cum_count': [1, 1, 2, 1], 'row_nr': [0, 1, 2, 0]}"
+  },
+  {
+   "title": "cut takes interior break points and needs len(breaks) + 1 labels, not pandas-style bin edges",
+   "applies_to": [
+    "Expr.cut"
+   ],
+   "trap": "`Expr.cut` treats `breaks` as cut points; the outer bins run to -inf and +inf automatically. Passing pandas-style edges with one label per bin therefore gives the wrong number of labels and raises an error. Intervals are right-closed by default (`(a, b]`); pass `left_closed=True` for `[a, b)`. The result is `Categorical` (or `Struct` with `include_breaks=True`), not a string or integer. The API is marked unstable.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [-2, -1, 0, 1, 2]})\n\n# Wrong: two breaks define three bins, so two labels is an error\ntry:\n    df.select(pl.col(\"x\").cut([-1, 1], labels=[\"low\", \"high\"]))\nexcept Exception:\n    print(\"raises an error\")\n\n# Right: len(breaks) + 1 labels; boundary values move with left_closed\nout = df.with_columns(\n    right=pl.col(\"x\").cut([-1, 1], labels=[\"a\", \"b\", \"c\"]),\n    left=pl.col(\"x\").cut([-1, 1], labels=[\"a\", \"b\", \"c\"], left_closed=True),\n)\nprint(out.rows())\nprint(out.schema[\"right\"])\n",
+   "output": "raises an error\n[(-2, 'a', 'a'), (-1, 'a', 'b'), (0, 'b', 'b'), (1, 'b', 'c'), (2, 'c', 'c')]\nCategorical"
+  },
+  {
+   "title": "String bounds in clip are column names, not literal values",
+   "applies_to": [
+    "Expr.clip"
+   ],
+   "trap": "`Expr.clip` parses string arguments as column names. Writing `clip(lower_bound=\"2024-01-01\")` on a date column therefore treats the string as a column name and raises an error. Pass a typed Python value instead, such as `date(2024, 1, 1)` or a number. `Expr.clip` only works on numeric and temporal columns, and null values stay null.",
+   "example": "import polars as pl\nfrom datetime import date\n\ndf = pl.DataFrame({\n    \"d\": [date(2023, 12, 1), date(2024, 6, 1), None],\n    \"v\": [-5, 50, None],\n})\n\n# Wrong: the string is treated as a column name\ntry:\n    df.select(pl.col(\"d\").clip(lower_bound=\"2024-01-01\"))\nexcept Exception:\n    print(\"raises an error\")\n\n# Right: pass typed literals; nulls stay null\nout = df.select(\n    pl.col(\"d\").clip(lower_bound=date(2024, 1, 1)),\n    pl.col(\"v\").clip(0, 10),\n)\nprint(out.to_dict(as_series=False))\n",
+   "output": "raises an error\n{'d': [datetime.date(2024, 1, 1), datetime.date(2024, 6, 1), None], 'v': [0, 10, None]}"
+  },
+  {
+   "title": "EWM functions use min_samples (not min_periods), and the default adjust=True is not the recursive formula",
+   "applies_to": [
+    "Expr.ewm_mean",
+    "Expr.ewm_std",
+    "Expr.ewm_var",
+    "Expr.cumulative_eval"
+   ],
+   "trap": "Since 1.21.0 the `min_periods` parameter of `Expr.ewm_mean`, `Expr.ewm_std`, `Expr.ewm_var` and `Expr.cumulative_eval` is named `min_samples`, so code copied from older Polars or pandas should be updated. Also, the default `adjust=True` computes a weighted average with weights `(1 - alpha)^i`. If you expect the textbook recursion `y_t = (1 - alpha) * y_{t-1} + alpha * x_t`, pass `adjust=False`, or your numbers will differ.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [1.0, 2.0, 3.0, 4.0]})\n\nout = df.select(\n    adjusted=pl.col(\"v\").ewm_mean(alpha=0.5),  # default adjust=True\n    recursive=pl.col(\"v\").ewm_mean(alpha=0.5, adjust=False),\n    recursive_min2=pl.col(\"v\").ewm_mean(alpha=0.5, adjust=False, min_samples=2),\n)\nfor name, values in out.to_dict(as_series=False).items():\n    print(name, values)\n",
+   "output": "adjusted [1.0, 1.6666666666666665, 2.4285714285714284, 3.2666666666666666]\nrecursive [1.0, 1.5, 2.25, 3.125]\nrecursive_min2 [None, 1.5, 2.25, 3.125]"
+  },
+  {
+   "title": "explode turns empty lists into null rows by default",
+   "applies_to": [
+    "Expr.explode"
+   ],
+   "trap": "With the defaults `empty_as_null=True` and `keep_nulls=True`, `Expr.explode` emits a `null` row for every empty list and every null list. The output length is therefore not the sum of the list lengths, and nulls appear that were never inside a list. Pass `empty_as_null=False` to drop empty lists and `keep_nulls=False` to drop null lists.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [[1, 2], [], None]})\n\n# Default: empty list and null list both become null rows\nprint(df.select(pl.col(\"v\").explode()).to_series().to_list())  # [1, 2, None, None]\n\n# Drop empty lists, then also drop null lists\nprint(df.select(pl.col(\"v\").explode(empty_as_null=False)).to_series().to_list())\nprint(df.select(pl.col(\"v\").explode(empty_as_null=False, keep_nulls=False)).to_series().to_list())\n",
+   "output": "[1, 2, None, None]\n[1, 2, None]\n[1, 2]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output confirms that `drop_nulls` keeps NaN, `drop_nans` keeps null and `fill_nan` leaves null alone, and that `fill_nan(None)` followed by the null tools cleans both.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The output shows null propagation in `eq`, `NaN == NaN` returning true, `eq_missing` returning only booleans, and the filter row counts of 2 versus 3.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm that `count` skips nulls, `cum_count` does not advance at nulls (1, 1, 2, 1) and the `int_range` row number gives 0, 1, 2, 0.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The docstring requires len(breaks) + 1 labels, the output shows the mismatch raising, right-closed versus left-closed boundary behaviour and a `Categorical` result, and the Struct and unstable claims come from the docstring.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "fix",
+   "reason": "Suggesting a bare `pl.lit(...)` is unsupported and misleading, because `pl.lit(\"2024-01-01\")` would still be a string rather than a date, so only typed values are shown to work.",
+   "trap": "`Expr.clip` parses string arguments as column names. Writing `clip(lower_bound=\"2024-01-01\")` on a date column therefore treats the string as a column name and raises an error. Pass a typed Python value instead, such as `date(2024, 1, 1)` or a number. `Expr.clip` only works on numeric and temporal columns, and null values stay null."
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The docstrings confirm the 1.21.0 rename to `min_samples` for all four APIs and the two `adjust` formulas, and the output shows that the adjusted and recursive results differ.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output exactly matches the described defaults and the effect of `empty_as_null=False` and `keep_nulls=False`.",
+   "trap": ""
+  }
+ ]
+}

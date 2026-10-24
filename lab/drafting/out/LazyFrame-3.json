@@ -1,0 +1,133 @@
+{
+ "chunk": "LazyFrame-3",
+ "group": "LazyFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "LazyFrame.update without `on` aligns rows by position and skips nulls",
+   "applies_to": [
+    "LazyFrame.update"
+   ],
+   "trap": "If `on` is omitted, `LazyFrame.update` joins on the *implicit row index*. Row 0 of `other` overwrites row 0 of the frame, key columns included, so an update meant to go by key is silently applied to the wrong rows. Nulls in `other` are also ignored by default (`include_nulls=False`), so you cannot clear a value unless you pass `include_nulls=True`. Always pass `on=` (or `left_on`/`right_on`). The API is marked unstable.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"A\": [1, 2, 3], \"B\": [10, 20, 30]})\nnew = pl.LazyFrame({\"A\": [2, 3], \"B\": [None, 99]})\n\n# Wrong: no `on`, so rows are matched by position and column A is overwritten too\nprint(lf.update(new).collect().to_dicts())\n\n# Right: match on the key; the null in `new` is ignored by default\nprint(lf.update(new, on=\"A\").collect().to_dicts())\n\n# To write the null through, opt in explicitly\nprint(lf.update(new, on=\"A\", include_nulls=True).collect().to_dicts())",
+   "output": "[{'A': 2, 'B': 10}, {'A': 3, 'B': 99}, {'A': 3, 'B': 30}]\n[{'A': 1, 'B': 10}, {'A': 2, 'B': 20}, {'A': 3, 'B': 99}]\n[{'A': 1, 'B': 10}, {'A': 2, 'B': None}, {'A': 3, 'B': 99}]"
+  },
+  {
+   "title": "LazyFrame.unique keeps an arbitrary duplicate in arbitrary order by default",
+   "applies_to": [
+    "LazyFrame.unique"
+   ],
+   "trap": "pandas `drop_duplicates` keeps the first row and preserves order. `LazyFrame.unique` defaults to `keep='any'` and `maintain_order=False`, which guarantee neither which duplicate survives nor the output order. Pass `keep='first'` (or `'last'`) and `maintain_order=True` when either matters. pandas `keep=False` corresponds to `keep='none'`, which drops every duplicated row.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"id\": [1, 2, 1], \"v\": [\"a\", \"b\", \"c\"]})\n\n# Default: only the row count is guaranteed, not which `v` is kept for id=1\nprint(lf.unique(subset=\"id\").collect().height)\n\n# pandas-like: keep the first occurrence, in original order\nprint(lf.unique(subset=\"id\", keep=\"first\", maintain_order=True).collect().to_dicts())\n\n# pandas keep=False equivalent: drop every duplicated key\nprint(lf.unique(subset=\"id\", keep=\"none\").collect().to_dicts())",
+   "output": "2\n[{'id': 1, 'v': 'a'}, {'id': 2, 'v': 'b'}]\n[{'id': 2, 'v': 'b'}]"
+  },
+  {
+   "title": "LazyFrame.sort puts nulls first and is not stable by default",
+   "applies_to": [
+    "LazyFrame.sort"
+   ],
+   "trap": "`LazyFrame.sort` defaults to `nulls_last=False`, so nulls come *first*, even when `descending=True`. pandas habits expect missing values at the end. Ties are also not guaranteed to keep their input order unless `maintain_order=True`. Pass `nulls_last=True` and/or `maintain_order=True` explicitly when the order of nulls or ties matters.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [2, None, 1]})\nprint(lf.sort(\"a\").collect().get_column(\"a\").to_list())\nprint(lf.sort(\"a\", descending=True).collect().get_column(\"a\").to_list())\nprint(lf.sort(\"a\", nulls_last=True).collect().get_column(\"a\").to_list())\n\nties = pl.LazyFrame({\"k\": [1, 1, 0], \"v\": [\"first\", \"second\", \"third\"]})\n# Stable sort: tied rows keep their input order\nprint(ties.sort(\"k\", maintain_order=True).collect().get_column(\"v\").to_list())",
+   "output": "[None, 1, 2]\n[None, 2, 1]\n[1, 2, None]\n['third', 'first', 'second']"
+  },
+  {
+   "title": "LazyFrame.top_k output is unordered and uses `reverse`, not `descending`",
+   "applies_to": [
+    "LazyFrame.top_k"
+   ],
+   "trap": "`LazyFrame.top_k` returns the k largest rows in no particular order. Do not assume row 0 is the maximum; chain `LazyFrame.sort` if order matters. Since 1.0.0 the direction flag is `reverse` (renamed from `descending`), and `reverse=True` selects the k *smallest* rows. Non-null values are always preferred over nulls, whichever direction you use.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"name\": [\"a\", \"b\", \"c\", \"d\"], \"score\": [3, None, 5, 1]})\n\n# Largest two, then sorted explicitly because top_k does not order its output\nprint(lf.top_k(2, by=\"score\").sort(\"score\", descending=True).collect().to_dicts())\n\n# Smallest two: reverse=True; the null is still not picked\nprint(lf.top_k(2, by=\"score\", reverse=True).sort(\"score\").collect().to_dicts())",
+   "output": "[{'name': 'c', 'score': 5}, {'name': 'a', 'score': 3}]\n[{'name': 'd', 'score': 1}, {'name': 'a', 'score': 3}]"
+  },
+  {
+   "title": "Replace deprecated LazyFrame.with_context with a horizontal pl.concat",
+   "applies_to": [
+    "LazyFrame.with_context",
+    "pl.concat"
+   ],
+   "trap": "`LazyFrame.with_context` is deprecated since 1.0.0. Use `pl.concat([...], how='horizontal')` to bring another frame's columns into scope. Rename the other frame's columns first (for example with `Expr.name.suffix`) so they do not collide with yours. Then compute aggregates such as `Expr.median` on the borrowed columns.",
+   "example": "import polars as pl\n\ntrain = pl.LazyFrame({\"x\": [-1.0, 0.0, 1.0]})\ntest = pl.LazyFrame({\"x\": [-1.0, None, 5.0]})\n\nboth = pl.concat(\n    [test, train.select(pl.all().name.suffix(\"_train\"))], how=\"horizontal\"\n)\nout = both.select(pl.col(\"x\").fill_null(pl.col(\"x_train\").median()))\nprint(out.collect().to_dicts())",
+   "output": "[{'x': -1.0}, {'x': 0.0}, {'x': 5.0}]"
+  },
+  {
+   "title": "LazyFrame.std and var default to sample statistics (ddof=1), unlike numpy",
+   "applies_to": [
+    "LazyFrame.std",
+    "LazyFrame.var"
+   ],
+   "trap": "`LazyFrame.std` and `LazyFrame.var` divide by N - 1 by default (`ddof=1`). That matches pandas but not numpy, whose default is population statistics (`ddof=0`). Porting numpy code without passing `ddof=0` silently changes the numbers. The results come back as `Float64`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3, 4]})\nprint(lf.std().collect().to_dicts())        # sample std, ddof=1\nprint(lf.std(ddof=0).collect().to_dicts())  # population std, numpy-style\nprint(lf.var().collect().to_dicts())\nprint(lf.var(ddof=0).collect().to_dicts())",
+   "output": "[{'a': 1.2909944487358056}]\n[{'a': 1.118033988749895}]\n[{'a': 1.6666666666666667}]\n[{'a': 1.25}]"
+  },
+  {
+   "title": "with_row_count is deprecated and its column name changed to 'index'",
+   "applies_to": [
+    "LazyFrame.with_row_count",
+    "LazyFrame.with_row_index"
+   ],
+   "trap": "`LazyFrame.with_row_count` is deprecated; use `LazyFrame.with_row_index` instead. The default column name is now `index`, not `row_nr`, so downstream code that selects `row_nr` breaks unless you pass `name='row_nr'`. The `offset` cannot be negative and raises a `ValueError`. Adding a row index can block predicate pushdown, so add it as late in the query as possible.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 3, 5]})\nout = lf.with_row_index().collect()\nprint(out.columns)\n\n# Keep old downstream code working by naming the column explicitly\nprint(lf.with_row_index(\"row_nr\", offset=1).collect().to_dicts())\n\ntry:\n    lf.with_row_index(offset=-1).collect()\nexcept ValueError:\n    print(\"negative offset rejected: ValueError\")",
+   "output": "['index', 'a']\n[{'row_nr': 1, 'a': 1}, {'row_nr': 2, 'a': 3}, {'row_nr': 3, 'a': 5}]\nnegative offset rejected: ValueError"
+  },
+  {
+   "title": "LazyFrame.unpivot uses `index`/`on`, not pandas `id_vars`/`value_vars`",
+   "applies_to": [
+    "LazyFrame.unpivot"
+   ],
+   "trap": "`LazyFrame.unpivot` does not take pandas-style `id_vars=` or `value_vars=` keywords. Pass the identifier columns as `index=` and the columns to unpivot as `on=`. If `on` is omitted (`None`, the default), every column not in `index` is unpivoted; an explicitly empty `on` unpivots no columns. The output columns are named `variable` and `value` unless you set `variable_name` and `value_name`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"id\": [\"x\", \"y\"], \"b\": [1, 3], \"c\": [2, 4]})\n\n# pandas id_vars -> index, value_vars -> on\nout = lf.unpivot(on=[\"b\", \"c\"], index=\"id\").sort(\"id\", \"variable\").collect()\nprint(out.to_dicts())\n\n# Omitting on unpivots every non-index column\nall_cols = lf.unpivot(index=\"id\", variable_name=\"col\", value_name=\"val\")\nprint(all_cols.sort(\"id\", \"col\").collect().to_dicts())",
+   "output": "[{'id': 'x', 'variable': 'b', 'value': 1}, {'id': 'x', 'variable': 'c', 'value': 2}, {'id': 'y', 'variable': 'b', 'value': 3}, {'id': 'y', 'variable': 'c', 'value': 4}]\n[{'id': 'x', 'col': 'b', 'val': 1}, {'id': 'x', 'col': 'c', 'val': 2}, {'id': 'y', 'col': 'b', 'val': 3}, {'id': 'y', 'col': 'c', 'val': 4}]"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "keep",
+   "reason": "The output shows positional alignment overwriting `A` and the null being skipped, and the docstring confirms the implicit row index, the `include_nulls` default and unstable status.",
+   "trap": ""
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The docstring confirms that `keep='any'` gives no guarantee and that `maintain_order` defaults to False, and the output shows `keep='first'` and `keep='none'` behaving as described.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "keep",
+   "reason": "The output shows nulls first for both ascending and `descending=True`, and the docstring ties stable ordering to `maintain_order`.",
+   "trap": ""
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "Every claim (unordered output, the 1.0.0 rename to `reverse`, smallest-k semantics, non-null preference) is stated in the docstring and consistent with the output.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The deprecation since 1.0.0 and the horizontal-concat replacement are in the docstring, and the output shows the null filled with the train median 0.0.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output and docstrings confirm `ddof=1` by default, the `ddof=0` values and f64 results.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The deprecation message, the `index` default, the negative-offset ValueError and the pushdown warning are all supported by the docstrings and output.",
+   "trap": ""
+  },
+  {
+   "index": 7,
+   "verdict": "fix",
+   "reason": "The docstring says an empty `on` uses no columns and only `on=None` (the default) unpivots every non-index column, so 'left empty' misstates the behavior.",
+   "trap": "`LazyFrame.unpivot` does not take pandas-style `id_vars=` or `value_vars=` keywords. Pass the identifier columns as `index=` and the columns to unpivot as `on=`. If `on` is omitted (`None`, the default), every column not in `index` is unpivoted; an explicitly empty `on` unpivots no columns. The output columns are named `variable` and `value` unless you set `variable_name` and `value_name`."
+  }
+ ]
+}

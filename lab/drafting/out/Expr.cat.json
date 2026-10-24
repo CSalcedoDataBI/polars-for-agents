@@ -1,0 +1,124 @@
+{
+ "chunk": "Expr.cat",
+ "group": "Expr.cat",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Cast to String for string operations the cat namespace does not have",
+   "applies_to": [
+    "Expr.cat.starts_with",
+    "Expr.cat.ends_with",
+    "Expr.cat.slice",
+    "Expr.cat.len_bytes",
+    "Expr.cat.len_chars",
+    "Expr.cat.get_categories"
+   ],
+   "trap": "`Expr.cat` exposes only a few string helpers, such as `Expr.cat.starts_with`, `Expr.cat.ends_with`, `Expr.cat.slice`, `Expr.cat.len_bytes`, `Expr.cat.len_chars` and `Expr.cat.get_categories`. It has no `contains`, and calling `pl.col(c).cat.contains(...)` raises `AttributeError`. For other string operations, first cast with `Expr.cast` to `pl.String`, then use `Expr.str` methods such as `Expr.str.contains` or `Expr.str.to_lowercase`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"fruit\": pl.Series([\"apple\", \"Mango\", None], dtype=pl.Categorical)})\ntry:\n    df.select(pl.col(\"fruit\").cat.contains(\"an\"))\nexcept AttributeError:\n    print(\"AttributeError\")\nout = df.select(\n    pl.col(\"fruit\").cast(pl.String).str.contains(\"an\").alias(\"has_an\"),\n    pl.col(\"fruit\").cast(pl.String).str.to_lowercase().alias(\"lower\"),\n)\nprint(out[\"has_an\"].to_list())\nprint(out[\"lower\"].to_list())\n",
+   "output": "AttributeError\n[False, True, None]\n['apple', 'mango', None]"
+  },
+  {
+   "title": "Pass only literal strings to cat.starts_with and cat.ends_with",
+   "applies_to": [
+    "Expr.cat.starts_with",
+    "Expr.cat.ends_with"
+   ],
+   "trap": "`Expr.str.starts_with` and `Expr.str.ends_with` accept expressions. Their categorical counterparts, `Expr.cat.starts_with` and `Expr.cat.ends_with`, require a literal Python `str`. So a call like `pl.col(\"code\").cat.starts_with(pl.col(\"region\"))` raises a `TypeError`. For a per-row prefix or suffix, cast to `pl.String` and pass the column expression to `Expr.str.starts_with` or `Expr.str.ends_with`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\n    \"code\": pl.Series([\"US-1\", \"EU-2\", \"US-3\"], dtype=pl.Categorical),\n    \"region\": [\"US\", \"EU\", \"EU\"],\n})\ntry:\n    df.select(pl.col(\"code\").cat.starts_with(pl.col(\"region\")))\nexcept TypeError:\n    print(\"TypeError\")\nout = df.with_columns(\n    pl.col(\"code\").cast(pl.String).str.starts_with(pl.col(\"region\")).alias(\"match\")\n)\nprint(out[\"match\"].to_list())\n",
+   "output": "TypeError\n[True, True, False]"
+  },
+  {
+   "title": "Expect cat.slice to return String, not Categorical",
+   "applies_to": [
+    "Expr.cat.slice"
+   ],
+   "trap": "`Expr.cat.slice` returns an expression of dtype `String`, so the categorical dtype is lost. Code further down that expects a categorical column will get a plain string column instead. If you need a categorical result, cast back explicitly with `Expr.cast` to `pl.Categorical`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"s\": pl.Series([\"pear\", None, \"papaya\"], dtype=pl.Categorical)})\nout = df.with_columns(\n    pl.col(\"s\").cat.slice(0, 2).alias(\"prefix_str\"),\n    pl.col(\"s\").cat.slice(0, 2).cast(pl.Categorical).alias(\"prefix_cat\"),\n)\nprint(out.dtypes)\nprint(out[\"prefix_str\"].to_list())\nprint(out[\"prefix_cat\"].to_list())\n",
+   "output": "[Categorical, String, Categorical]\n['pe', None, 'pa']\n['pe', None, 'pa']"
+  },
+  {
+   "title": "Do not use get_categories to list the values present in a column",
+   "applies_to": [
+    "Expr.cat.get_categories"
+   ],
+   "trap": "`Expr.cat.get_categories` returns the categories stored in the data type, not the distinct values in the column. For a `pl.Enum`, that means every declared category, including ones that never occur in the data. To list only the values actually present, use `Expr.unique`. Pass `maintain_order=True` if order matters.",
+   "example": "import polars as pl\n\nsize = pl.Enum([\"S\", \"M\", \"L\", \"XL\"])\ndf = pl.DataFrame({\"size\": pl.Series([\"M\", \"S\", \"M\"], dtype=size)})\ncats = df.select(pl.col(\"size\").cat.get_categories()).to_series()\npresent = df.select(pl.col(\"size\").unique(maintain_order=True)).to_series()\nprint(cats.to_list())\nprint(present.to_list())\n",
+   "output": "['S', 'M', 'L', 'XL']\n['M', 'S']"
+  },
+  {
+   "title": "Use cat.len_chars, not cat.len_bytes, for character counts on non-ASCII text",
+   "applies_to": [
+    "Expr.cat.len_bytes",
+    "Expr.cat.len_chars"
+   ],
+   "trap": "`Expr.cat.len_bytes` counts UTF-8 bytes, not characters. For example, \"Caf\\u00e9\" is 5 bytes but 4 characters, so a length filter written with it silently drops valid non-ASCII values. Use `Expr.cat.len_chars` when you mean characters. Keep `Expr.cat.len_bytes` for byte sizes or for data known to be ASCII. Both return `UInt32`, and null inputs give null.",
+   "example": "import polars as pl\n\ncity = [\"Caf\\u00e9\", \"\\u6771\\u4eac\", \"Oslo\", None]\ndf = pl.DataFrame({\"city\": pl.Series(city, dtype=pl.Categorical)})\nout = df.with_columns(\n    pl.col(\"city\").cat.len_bytes().alias(\"n_bytes\"),\n    pl.col(\"city\").cat.len_chars().alias(\"n_chars\"),\n)\nprint(out[\"n_bytes\"].to_list())\nprint(out[\"n_chars\"].to_list())\nprint(df.filter(pl.col(\"city\").cat.len_bytes() <= 4).height)\nprint(df.filter(pl.col(\"city\").cat.len_chars() <= 4).height)\n",
+   "output": "[5, 6, 4, None]\n[4, 2, 4, None]\n1\n3"
+  },
+  {
+   "title": "Fill nulls before negating cat.starts_with or cat.ends_with in a filter",
+   "applies_to": [
+    "Expr.cat.starts_with",
+    "Expr.cat.ends_with"
+   ],
+   "trap": "`Expr.cat.starts_with` and `Expr.cat.ends_with` return null for null values. Negating null with `~` still gives null, and `DataFrame.filter` drops rows whose condition is null. As a result, `~pl.col(c).cat.starts_with(p)` silently excludes the null rows. If nulls should count as \"does not start with\", add `Expr.fill_null(False)` before negating.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"fruit\": pl.Series([\"apple\", \"mango\", None], dtype=pl.Categorical)})\nwrong = df.filter(~pl.col(\"fruit\").cat.starts_with(\"app\"))\nright = df.filter(~pl.col(\"fruit\").cat.starts_with(\"app\").fill_null(False))\nprint(wrong[\"fruit\"].to_list())\nprint(right[\"fruit\"].to_list())\n",
+   "output": "['mango']\n['mango', None]"
+  },
+  {
+   "title": "Replace pandas cat.codes and cat.categories with to_physical and get_categories",
+   "applies_to": [
+    "Expr.cat.get_categories",
+    "Expr.to_physical"
+   ],
+   "trap": "pandas users reach for `.cat.codes` or `.cat.categories`, but neither exists on `Expr.cat`, and accessing them raises `AttributeError`. Use `Expr.to_physical` to get the integer codes. Use `Expr.cat.get_categories` to get the categories; it is a method call, not an attribute.",
+   "example": "import polars as pl\n\nlvl = pl.Enum([\"lo\", \"mid\", \"hi\"])\ndf = pl.DataFrame({\"lvl\": pl.Series([\"hi\", \"lo\", \"mid\", \"hi\"], dtype=lvl)})\nfor attr in [\"codes\", \"categories\"]:\n    try:\n        getattr(pl.col(\"lvl\").cat, attr)\n    except AttributeError:\n        print(attr, \"AttributeError\")\nprint(df.select(pl.col(\"lvl\").to_physical()).to_series().to_list())\nprint(df.select(pl.col(\"lvl\").cat.get_categories()).to_series().to_list())\n",
+   "output": "codes AttributeError\ncategories AttributeError\n[2, 0, 1, 2]\n['lo', 'mid', 'hi']"
+  }
+ ],
+ "failed": [],
+ "verification": [
+  {
+   "index": 0,
+   "verdict": "fix",
+   "reason": "The output shows only that `cat.contains` raises `AttributeError`, so the 'only six methods' claim and the `cat.replace`/`cat.to_lowercase` claims are unsupported.",
+   "trap": "`Expr.cat` exposes only a few string helpers, such as `Expr.cat.starts_with`, `Expr.cat.ends_with`, `Expr.cat.slice`, `Expr.cat.len_bytes`, `Expr.cat.len_chars` and `Expr.cat.get_categories`. It has no `contains`, and calling `pl.col(c).cat.contains(...)` raises `AttributeError`. For other string operations, first cast with `Expr.cast` to `pl.String`, then use `Expr.str` methods such as `Expr.str.contains` or `Expr.str.to_lowercase`."
+  },
+  {
+   "index": 1,
+   "verdict": "keep",
+   "reason": "The docstring states that a literal string is required, and the output shows a `TypeError` for the expression input and a working String-cast workaround.",
+   "trap": ""
+  },
+  {
+   "index": 2,
+   "verdict": "fix",
+   "reason": "The String return dtype is shown, but the claim that `Expr.cat` methods no longer apply is not demonstrated.",
+   "trap": "`Expr.cat.slice` returns an expression of dtype `String`, so the categorical dtype is lost. Code further down that expects a categorical column will get a plain string column instead. If you need a categorical result, cast back explicitly with `Expr.cast` to `pl.Categorical`."
+  },
+  {
+   "index": 3,
+   "verdict": "keep",
+   "reason": "The output shows that `get_categories` returns all declared Enum categories, while `unique(maintain_order=True)` returns only the values present.",
+   "trap": ""
+  },
+  {
+   "index": 4,
+   "verdict": "keep",
+   "reason": "The byte and character counts, the filter heights, the UInt32 dtype and the null handling are all supported by the output and the docstrings.",
+   "trap": ""
+  },
+  {
+   "index": 5,
+   "verdict": "keep",
+   "reason": "The output shows that the negated filter drops the null row unless `fill_null(False)` is applied first.",
+   "trap": ""
+  },
+  {
+   "index": 6,
+   "verdict": "keep",
+   "reason": "The output confirms `AttributeError` for `codes` and `categories`, and shows that `to_physical` and `get_categories` give the codes and the categories.",
+   "trap": ""
+  }
+ ]
+}

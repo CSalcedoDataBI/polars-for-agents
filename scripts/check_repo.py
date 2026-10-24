@@ -4,15 +4,21 @@
   `description`.
 - Every workflow job sets `timeout-minutes` and runs on `ubuntu-latest`, and every workflow
   declares `concurrency` (Actions cost rules R2, R3, R5).
+- The catalogue JSON is the export script's output, and its counts match its entries.
+- Every Markdown file under skills/ names only Polars APIs that are in the catalogue
+  (`catalog_names.py`).
 
 Standard library only, so CI needs no install step. Exit code 1 lists every failure.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
+
+import catalog_names
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -54,8 +60,32 @@ def check_workflows() -> list[str]:
     return errors
 
 
+def check_catalog() -> list[str]:
+    """The catalogue is the export script's output, untouched, and the checker still bites."""
+    data = json.loads(catalog_names.catalog_path().read_text(encoding="utf-8"))
+    errors = []
+    if data.get("generated_by") != "scripts/export_catalog.py":
+        errors.append("catalog: not written by scripts/export_catalog.py")
+    for group, entries in data["groups"].items():
+        if data["counts"].get(group) != len(entries):
+            errors.append(f"catalog: counts[{group}] does not match its {len(entries)} entries (edited by hand?)")
+    # A known-bad example must fail, or the name check is not checking anything.
+    if not catalog_names.check_code("import polars as pl\npl.col('a').str.contanis('x')\npl.colum('b')"):
+        errors.append("catalog_names: an invented name passed the check")
+    return errors
+
+
+def check_names() -> list[str]:
+    """Every Markdown file an agent reads names only what the catalogue has (CLAUDE.md rule 1)."""
+    errors = []
+    for md in sorted((ROOT / "skills").rglob("*.md")):
+        rel = md.relative_to(ROOT).as_posix()
+        errors += [f"{rel}: {problem}" for problem in catalog_names.check_markdown(md.read_text(encoding="utf-8"))]
+    return errors
+
+
 def main() -> int:
-    errors = check_skills() + check_workflows()
+    errors = check_skills() + check_workflows() + check_catalog() + check_names()
     for error in errors:
         print(f"FAIL {error}")
     if not errors:
