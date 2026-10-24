@@ -1,0 +1,45 @@
+{
+ "chunk": "Series-1-pass2",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "backward_fill does not fill NaN, only null",
+   "applies_to": [
+    "Series.backward_fill"
+   ],
+   "trap": "In pandas, `bfill` treats NaN as missing. In Polars, `Series.backward_fill` (an alias of `fill_null(strategy=\"backward\")`) fills only nulls, and NaN counts as a valid float value. A null that comes just before a NaN gets filled *with* the NaN, and the NaN itself stays. Convert NaN to null first with `Series.fill_nan(None)`, then call `Series.backward_fill`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [None, float(\"nan\"), 1.0])\n\n# pandas habit: NaN is treated as missing (it is not in Polars)\nprint(s.backward_fill().to_list())\n\n# Right: turn NaN into null, then fill\nprint(s.fill_nan(None).backward_fill().to_list())\n",
+   "output": "[nan, nan, 1.0]\n[1.0, 1.0, 1.0]"
+  },
+  {
+   "title": "cum_sum and cum_prod upcast only small integer dtypes",
+   "applies_to": [
+    "Series.cum_sum",
+    "Series.cum_prod"
+   ],
+   "trap": "`Series.cum_sum` and `Series.cum_prod` cast Int8, UInt8, Int16 and UInt16 to Int64 before accumulating. So the result dtype differs from the input dtype. Other integer dtypes such as Int32 are not listed for this upcast and keep their own dtype. Do not assume the output dtype matches the input. If you need a fixed dtype, or headroom for large products, `Series.cast` explicitly first.",
+   "example": "import polars as pl\n\ns8 = pl.Series(\"a\", [1, 2, 3], dtype=pl.Int8)\ns32 = pl.Series(\"b\", [1, 2, 3], dtype=pl.Int32)\n\nprint(s8.cum_sum().dtype)   # upcast to Int64\nprint(s32.cum_sum().dtype)  # not upcast\n\n# Right: choose the accumulation dtype explicitly\nprint(s32.cast(pl.Int64).cum_prod().dtype)\n",
+   "output": "Int64\nInt32\nInt64"
+  },
+  {
+   "title": "clip leaves nulls as null and None bounds mean unbounded",
+   "applies_to": [
+    "Series.clip"
+   ],
+   "trap": "`Series.clip` does not touch nulls: a null stays null in the output and is not clamped to a bound. Passing `None` as a bound means \"no bound on that side\", not a null bound. The method only works for numeric and temporal data. For other dtypes, write a `pl.when` expression instead. If nulls should become a bound value, chain `Series.fill_null` explicitly.",
+   "example": "import polars as pl\n\ns = pl.Series(\"v\", [-50, 5, 50, None])\n\nprint(s.clip(1, 10).to_list())                # null survives\nprint(s.clip(upper_bound=10).to_list())       # no lower bound applied\nprint(s.clip(1, 10).fill_null(1).to_list())   # fill explicitly if wanted\n",
+   "output": "[1, 5, 10, None]\n[-50, 5, 10, None]\n[1, 5, 10, 1]"
+  },
+  {
+   "title": "cumulative_eval is unstable, O(n^2), and uses min_samples not min_periods",
+   "applies_to": [
+    "Series.cumulative_eval"
+   ],
+   "trap": "`Series.cumulative_eval` is marked unstable, so its behaviour may change without a breaking-change notice. It re-evaluates the expression over an ever-growing window, which can cost `O(n^2)`. For plain running aggregates, prefer `Series.cum_sum`, `Series.cum_max` and similar. Since 1.21.0 the threshold parameter is `min_samples`; the old pandas-style `min_periods` name was renamed. Windows with fewer valid values than `min_samples` produce null.",
+   "example": "import polars as pl\n\ns = pl.Series(\"values\", [1, 2, 3, 4, 5])\n\n# Expensive general form; early windows are null below min_samples\nprint(s.cumulative_eval(pl.element().sum(), min_samples=3).to_list())\n\n# Right for simple running sums: the dedicated cumulative method\nprint(s.cum_sum().to_list())\n",
+   "output": "[None, None, 6, 10, 15]\n[1, 3, 6, 10, 15]"
+  }
+ ],
+ "failed": []
+}

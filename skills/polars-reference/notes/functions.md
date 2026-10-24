@@ -4,6 +4,251 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
+## pl.concat_list returns null for the whole row if any input is null, and upcasts to a supertype
+
+Applies to: `pl.concat_list`
+
+`pl.concat_list` propagates nulls. If any input list in a row is null, the whole concatenated list for that row is null, not the other lists joined together. The output dtype is also the supertype of all inputs, so mixing an integer list with a string literal turns every element into a string. Handle null inputs explicitly, for example with `pl.when` on `Expr.is_null`, and cast inputs to a common dtype yourself.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [[1, 2], [3]], "b": [[4], None]})
+out = df.with_columns(
+    naive=pl.concat_list("a", "b"),
+    safe=pl.when(pl.col("b").is_null())
+    .then(pl.col("a"))
+    .otherwise(pl.concat_list("a", "b")),
+)
+print(out)
+print(df.select(pl.concat_list("a", pl.lit("x"))).dtypes)
+```
+
+Output:
+
+```text
+shape: (2, 4)
+┌───────────┬───────────┬───────────┬───────────┐
+│ a         ┆ b         ┆ naive     ┆ safe      │
+│ ---       ┆ ---       ┆ ---       ┆ ---       │
+│ list[i64] ┆ list[i64] ┆ list[i64] ┆ list[i64] │
+╞═══════════╪═══════════╪═══════════╪═══════════╡
+│ [1, 2]    ┆ [4]       ┆ [1, 2, 4] ┆ [1, 2, 4] │
+│ [3]       ┆ null      ┆ null      ┆ [3]       │
+└───────────┴───────────┴───────────┴───────────┘
+[List(String)]
+```
+
+## pl.cum_count counts non-null values, not rows
+
+Applies to: `pl.cum_count`
+
+pandas `cumcount` numbers rows, but `pl.cum_count` is the cumulative count of non-null values. On a null the counter does not advance, so it repeats the previous number. To get a running row number, use `pl.int_range` over `pl.len()` instead.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, None, 3, None]})
+out = df.with_columns(
+    cc=pl.cum_count("a"),
+    row_no=pl.int_range(1, pl.len() + 1),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (4, 3)
+┌──────┬─────┬────────┐
+│ a    ┆ cc  ┆ row_no │
+│ ---  ┆ --- ┆ ---    │
+│ i64  ┆ u32 ┆ i64    │
+╞══════╪═════╪════════╡
+│ 1    ┆ 1   ┆ 1      │
+│ null ┆ 1   ┆ 2      │
+│ 3    ┆ 2   ┆ 3      │
+│ null ┆ 2   ┆ 4      │
+└──────┴─────┴────────┘
+```
+
+## String arguments to pl.format are column names, not literal text
+
+Applies to: `pl.format`
+
+In `pl.format`, each positional argument after the template fills a `{}` placeholder, and plain strings are parsed as column names. Passing a word you meant as literal text fails because no column has that name. Wrap literal text in `pl.lit`, or put it directly into the template string.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": ["x", "y"], "b": [1, 2]})
+try:
+    df.select(pl.format("{}-{}", "a", "units"))
+except Exception as e:
+    print(type(e).__name__)
+print(df.select(pl.format("{}-{}", "a", pl.lit("units")).alias("fmt")))
+print(df.select(pl.format("{}_{}", "a", "b").alias("fmt")))
+```
+
+Output:
+
+```text
+ColumnNotFoundError
+shape: (2, 1)
+┌─────────┐
+│ fmt     │
+│ ---     │
+│ str     │
+╞═════════╡
+│ x-units │
+│ y-units │
+└─────────┘
+shape: (2, 1)
+┌─────┐
+│ fmt │
+│ --- │
+│ str │
+╞═════╡
+│ x_1 │
+│ y_2 │
+└─────┘
+```
+
+## pl.fold result dtype follows the accumulator, so pl.lit(0) gives Int32
+
+Applies to: `pl.fold`, `pl.cum_fold`
+
+When `return_dtype` is not set, `pl.fold` and `pl.cum_fold` infer the output dtype from the accumulator. A bare `pl.lit(0)` or `pl.lit(1)` is Int32, so a horizontal sum of Int64 columns comes back as Int32. Give the accumulator an explicit dtype with `pl.lit(0, dtype=pl.Int64)`, or pass `return_dtype`. For plain horizontal sums, prefer `pl.sum_horizontal`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
+out = df.select(
+    i32=pl.fold(acc=pl.lit(0), function=lambda acc, x: acc + x, exprs=pl.all()),
+    i64=pl.fold(
+        acc=pl.lit(0, dtype=pl.Int64), function=lambda acc, x: acc + x, exprs=pl.all()
+    ),
+    builtin=pl.sum_horizontal("a", "b"),
+)
+print(out.schema)
+print(out)
+```
+
+Output:
+
+```text
+Schema({'i32': Int32, 'i64': Int64, 'builtin': Int64})
+shape: (2, 3)
+┌─────┬─────┬─────────┐
+│ i32 ┆ i64 ┆ builtin │
+│ --- ┆ --- ┆ ---     │
+│ i32 ┆ i64 ┆ i64     │
+╞═════╪═════╪═════════╡
+│ 4   ┆ 4   ┆ 4       │
+│ 6   ┆ 6   ┆ 6       │
+└─────┴─────┴─────────┘
+```
+
+## pl.from_dict is strict by default; strict=False turns uncastable values into null
+
+Applies to: `pl.from_dict`
+
+With the default `strict=True`, `pl.from_dict` raises if any value does not exactly match the given or inferred column dtype. Setting `strict=False` does not keep the odd values. They are cast to the column dtype, or silently set to null when casting is impossible. If you use `strict=False`, check `DataFrame.null_count` afterwards so lost data does not go unnoticed.
+
+```python
+import polars as pl
+
+data = {"a": [1, "x", 3]}
+try:
+    pl.from_dict(data, schema={"a": pl.Int64})
+except Exception as e:
+    print(type(e).__name__)
+df = pl.from_dict(data, schema={"a": pl.Int64}, strict=False)
+print(df)
+print(df.null_count())
+```
+
+Output:
+
+```text
+TypeError
+shape: (3, 1)
+┌──────┐
+│ a    │
+│ ---  │
+│ i64  │
+╞══════╡
+│ 1    │
+│ null │
+│ 3    │
+└──────┘
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ u32 │
+╞═════╡
+│ 1   │
+└─────┘
+```
+
+## pl.exclude treats a pattern as a regex only when it is wrapped in ^...$
+
+Applies to: `pl.exclude`
+
+`pl.exclude` accepts regular expressions, but only when they start with `^` and end with `$`. A pattern such as `.*a` is taken as a literal column name, so it does not remove the columns you meant to drop. Anchor the pattern as `^.*a$`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"aa": [1], "ba": ["x"], "cc": [2.5]})
+try:
+    print(df.select(pl.exclude(".*a")).columns)
+except Exception as e:
+    print(type(e).__name__)
+print(df.select(pl.exclude("^.*a$")).columns)
+```
+
+Output:
+
+```text
+['aa', 'ba', 'cc']
+['cc']
+```
+
+## pl.arctan2d is deprecated; use pl.arctan2 then Expr.degrees
+
+Applies to: `pl.arctan2d`, `pl.arctan2`
+
+`pl.arctan2d` has been deprecated since 1.0.0 and emits a deprecation warning. `pl.arctan2` returns radians, so do not mix the two up. For degrees, chain `pl.arctan2(...)` with `Expr.degrees`. Note that the argument order is `(y, x)`.
+
+```python
+import polars as pl
+
+c = (2**0.5) / 2
+df = pl.DataFrame({"y": [c, -c], "x": [c, -c]})
+out = df.select(
+    radians=pl.arctan2("y", "x"),
+    degrees=pl.arctan2("y", "x").degrees(),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (2, 2)
+┌───────────┬─────────┐
+│ radians   ┆ degrees │
+│ ---       ┆ ---     │
+│ f64       ┆ f64     │
+╞═══════════╪═════════╡
+│ 0.785398  ┆ 45.0    │
+│ -2.356194 ┆ -135.0  │
+└───────────┴─────────┘
+```
+
 ## pl.concat_str returns null for the whole row if any input is null
 
 Applies to: `pl.concat_str`
@@ -217,6 +462,296 @@ Output:
 ['exclusive', 'inclusive', 'with_holiday'] [(4, 5, 3)]
 ```
 
+## from_dicts only infers the schema from the first 100 dicts
+
+Applies to: `pl.from_dicts`
+
+`pl.from_dicts` scans at most `infer_schema_length=100` rows to infer the schema. A key that first appears after that window is not part of the inferred schema, so its column can silently go missing. A value whose type does not match the inferred dtype raises under the default `strict=True`. For heterogeneous records, pass `infer_schema_length=None` (a full scan) or declare an explicit `schema`.
+
+```python
+import polars as pl
+
+rows = [{"a": i} for i in range(100)] + [{"a": 100, "b": "late"}]
+
+df = pl.from_dicts(rows)
+print(df.columns)
+
+full = pl.from_dicts(rows, infer_schema_length=None)
+print(full.columns)
+print(full.tail(1))
+```
+
+Output:
+
+```text
+['a']
+['a', 'b']
+shape: (1, 2)
+┌─────┬──────┐
+│ a   ┆ b    │
+│ --- ┆ ---  │
+│ i64 ┆ str  │
+╞═════╪══════╡
+│ 100 ┆ late │
+└─────┴──────┘
+```
+
+## from_records treats square data as columns unless orient is given
+
+Applies to: `pl.from_records`
+
+When `orient=None`, `pl.from_records` guesses the orientation by matching the schema length against the data dimensions. If the guess is inconclusive, as with square data, it falls back to column orientation. A list of rows like `[[1, 2], [3, 4]]` with two column names is therefore silently transposed. Always pass `orient="row"` when your inner sequences are rows.
+
+```python
+import polars as pl
+
+data = [[1, 2], [3, 4]]
+
+wrong = pl.from_records(data, schema=["a", "b"])
+print(wrong)
+
+right = pl.from_records(data, schema=["a", "b"], orient="row")
+print(right)
+```
+
+Output:
+
+```text
+shape: (2, 2)
+┌─────┬─────┐
+│ a   ┆ b   │
+│ --- ┆ --- │
+│ i64 ┆ i64 │
+╞═════╪═════╡
+│ 1   ┆ 3   │
+│ 2   ┆ 4   │
+└─────┴─────┘
+shape: (2, 2)
+┌─────┬─────┐
+│ a   ┆ b   │
+│ --- ┆ --- │
+│ i64 ┆ i64 │
+╞═════╪═════╡
+│ 1   ┆ 2   │
+│ 3   ┆ 4   │
+└─────┴─────┘
+```
+
+## pl.repeat infers Int32 for integers and pl.ones defaults to Float64
+
+Applies to: `pl.repeat`, `pl.ones`
+
+With `dtype=None`, `pl.repeat` infers `Int32` for integer values unless `Int64` is needed to fit the value. It does not use the `Int64` you get from Python ints in a DataFrame. `pl.ones` defaults to `Float64` even though it holds whole numbers. These dtypes can cause schema mismatches when concatenating or comparing with `Int64` columns, so pass `dtype=` explicitly.
+
+```python
+import polars as pl
+
+print(pl.repeat(1, 3, eager=True).dtype)
+print(pl.ones(3, eager=True).dtype)
+
+df = pl.DataFrame({"x": [10, 20, 30]})
+print(df.schema)
+
+out = df.with_columns(
+    pl.repeat(1, pl.len(), dtype=pl.Int64).alias("one"),
+    pl.ones(pl.len(), dtype=pl.Int64).alias("one_b"),
+)
+print(out.schema)
+```
+
+Output:
+
+```text
+Int32
+Float64
+Schema({'x': Int64})
+Schema({'x': Int64, 'one': Int64, 'one_b': Int64})
+```
+
+## pl.mean over several columns is per column, not a row-wise mean
+
+Applies to: `pl.mean`
+
+`pl.mean("a", "b")` is sugar for `pl.col("a", "b").mean()`. It reduces each column vertically and returns one row with one mean per column. It does not average across columns like pandas `df.mean(axis=1)`. For a per-row mean, use `pl.mean_horizontal`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2], "b": [3, 6]})
+
+# per-column means, one row
+print(df.select(pl.mean("a", "b")))
+
+# row-wise mean
+print(df.with_columns(pl.mean_horizontal("a", "b").alias("row_mean")))
+```
+
+Output:
+
+```text
+shape: (1, 2)
+┌─────┬─────┐
+│ a   ┆ b   │
+│ --- ┆ --- │
+│ f64 ┆ f64 │
+╞═════╪═════╡
+│ 1.5 ┆ 4.5 │
+└─────┴─────┘
+shape: (2, 3)
+┌─────┬─────┬──────────┐
+│ a   ┆ b   ┆ row_mean │
+│ --- ┆ --- ┆ ---      │
+│ i64 ┆ i64 ┆ f64      │
+╞═════╪═════╪══════════╡
+│ 1   ┆ 3   ┆ 2.0      │
+│ 2   ┆ 6   ┆ 4.0      │
+└─────┴─────┴──────────┘
+```
+
+## pl.nth selects columns by position, not rows, and is strict
+
+Applies to: `pl.nth`
+
+Unlike pandas `groupby(...).nth(n)`, which picks rows, `pl.nth` selects the n-th column(s) of the context. By default (`strict=True`) an out-of-bounds index raises. Pass `strict=False` to ignore indices that do not exist. To pick the n-th row of a column, use `Expr.get` (or `Expr.gather`) instead.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 8, 3], "b": [4, 5, 2]})
+
+print(df.select(pl.nth(1)))  # column 'b', not row 1
+
+try:
+    df.select(pl.nth(0, 5))
+except Exception as e:
+    print(type(e).__name__)
+
+print(df.select(pl.nth(0, 5, strict=False)))
+
+# row at position 1 of column 'a'
+print(df.select(pl.col("a").get(1)))
+```
+
+Output:
+
+```text
+shape: (3, 1)
+┌─────┐
+│ b   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 4   │
+│ 5   │
+│ 2   │
+└─────┘
+ColumnNotFoundError
+shape: (3, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 1   │
+│ 8   │
+│ 3   │
+└─────┘
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 8   │
+└─────┘
+```
+
+## pl.map_batches passes ONE list of Series to the function
+
+Applies to: `pl.map_batches`
+
+The callable given to `pl.map_batches` receives a single argument: a sequence of Series, one per entry in `exprs`. It does not receive one positional argument per column, so `lambda a, b: a + b` fails. Index into the list instead, and set `return_dtype` so Polars does not need to infer it. Prefer native expressions such as `pl.sum_horizontal` when they exist.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2], "b": [10, 20]})
+
+try:
+    df.select(pl.map_batches(["a", "b"], lambda a, b: a + b, return_dtype=pl.Int64))
+except Exception as e:
+    print(type(e).__name__)
+
+out = df.select(
+    pl.map_batches(["a", "b"], lambda s: s[0] + s[1], return_dtype=pl.Int64).alias("a_plus_b")
+)
+print(out)
+
+print(df.select(pl.sum_horizontal("a", "b").alias("native")))
+```
+
+Output:
+
+```text
+TypeError
+shape: (2, 1)
+┌──────────┐
+│ a_plus_b │
+│ ---      │
+│ i64      │
+╞══════════╡
+│ 11       │
+│ 22       │
+└──────────┘
+shape: (2, 1)
+┌────────┐
+│ native │
+│ ---    │
+│ i64    │
+╞════════╡
+│ 11     │
+│ 22     │
+└────────┘
+```
+
+## json_normalize turns dicts past max_level into JSON strings
+
+Applies to: `pl.json_normalize`
+
+`pl.json_normalize` is unstable. Unlike pandas, it encodes any dictionary it does not unnest as JSON string data, never as objects. With `max_level` set, deeper dicts become `String` columns holding JSON text rather than nested values. Leave `max_level=None` to flatten every level, or decode the strings afterwards with `Expr.str.json_decode`.
+
+```python
+import polars as pl
+
+data = [
+    {"id": 1, "fitness": {"height": 180, "stats": {"bmi": 26}}},
+    {"id": 2, "fitness": {"height": 155, "stats": {"bmi": 24}}},
+]
+
+shallow = pl.json_normalize(data, max_level=1)
+print(shallow.schema)
+print(shallow)
+
+full = pl.json_normalize(data)
+print(full.schema)
+```
+
+Output:
+
+```text
+Schema({'id': Int64, 'fitness.height': Int64, 'fitness.stats': String})
+shape: (2, 3)
+┌─────┬────────────────┬───────────────┐
+│ id  ┆ fitness.height ┆ fitness.stats │
+│ --- ┆ ---            ┆ ---           │
+│ i64 ┆ i64            ┆ str           │
+╞═════╪════════════════╪═══════════════╡
+│ 1   ┆ 180            ┆ {"bmi": 26}   │
+│ 2   ┆ 155            ┆ {"bmi": 24}   │
+└─────┴────────────────┴───────────────┘
+Schema({'id': Int64, 'fitness.height': Int64, 'fitness.stats.bmi': Int64})
+```
+
 ## pl.from_epoch assumes seconds by default, so millisecond timestamps give wrong dates
 
 Applies to: `pl.from_epoch`
@@ -416,6 +951,148 @@ List(Datetime(time_unit='us', time_zone=None))
 (1, datetime.datetime(2024, 1, 2, 0, 0))
 (2, datetime.datetime(2024, 1, 5, 0, 0))
 (2, datetime.datetime(2024, 1, 6, 0, 0))
+```
+
+## pl.row_index restarts at 0 inside each group
+
+Applies to: `pl.row_index`
+
+`pl.row_index` numbers rows within the current evaluation context. Inside `DataFrame.group_by(...).agg(...)` it restarts at 0 for each group, so it does not give the original row positions. If you need the original positions, call `DataFrame.with_row_index` before grouping and aggregate that column. The dtype is the index type (`u32` by default), not `i64`. The function is also marked unstable.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"x": ["A", "B", "A", "B", "B"]})
+
+# Trap: positions are per group, not the original row numbers
+print(df.group_by("x", maintain_order=True).agg(pl.row_index()))
+
+# Right: materialise the original row index before grouping
+print(
+    df.with_row_index("idx")
+    .group_by("x", maintain_order=True)
+    .agg(pl.col("idx"))
+)
+
+print(df.select(pl.row_index()).schema)
+```
+
+Output:
+
+```text
+shape: (2, 2)
+┌─────┬───────────┐
+│ x   ┆ index     │
+│ --- ┆ ---       │
+│ str ┆ list[u32] │
+╞═════╪═══════════╡
+│ A   ┆ [0, 1]    │
+│ B   ┆ [0, 1, 2] │
+└─────┴───────────┘
+shape: (2, 2)
+┌─────┬───────────┐
+│ x   ┆ idx       │
+│ --- ┆ ---       │
+│ str ┆ list[u32] │
+╞═════╪═══════════╡
+│ A   ┆ [0, 2]    │
+│ B   ┆ [1, 3, 4] │
+└─────┴───────────┘
+Schema({'index': UInt32})
+```
+
+## pl.time_range includes both endpoints and defaults end to the end of the day
+
+Applies to: `pl.time_range`, `pl.time_ranges`
+
+`pl.time_range` and `pl.time_ranges` default to `closed='both'`, so the `end` value is included. This differs from Python's `range` and pandas-style half-open slicing. Pass `closed='left'` for a half-open range. If you omit `end`, it defaults to `time(23,59,59,999999)`, so the range silently runs to midnight.
+
+```python
+import polars as pl
+from datetime import time
+
+both = pl.time_range(time(9), time(12), "1h", eager=True)
+left = pl.time_range(time(9), time(12), "1h", closed="left", eager=True)
+no_end = pl.time_range(time(22), interval="1h", eager=True)
+
+print(both.to_list())    # includes 12:00
+print(left.to_list())    # stops at 11:00
+print(no_end.to_list())  # runs to the end of the day
+```
+
+Output:
+
+```text
+[datetime.time(9, 0), datetime.time(10, 0), datetime.time(11, 0), datetime.time(12, 0)]
+[datetime.time(9, 0), datetime.time(10, 0), datetime.time(11, 0)]
+[datetime.time(22, 0), datetime.time(23, 0)]
+```
+
+## pl.union does not preserve row order; use pl.concat when order matters
+
+Applies to: `pl.union`
+
+`pl.union` looks like `pl.concat` and takes the same `how` strategies. However, it explicitly does not guarantee any ordering of rows in the result. Code that assumes the rows of the first frame come first, or relies on positional alignment afterwards, can silently get wrong results. Use `pl.concat` when you need predictable order, or sort the union result explicitly.
+
+```python
+import polars as pl
+
+a = pl.DataFrame({"id": [1, 2]})
+b = pl.DataFrame({"id": [3, 4]})
+
+u = pl.union([a, b])
+# Only rely on the union's content, not its order: sort explicitly
+print(u.sort("id")["id"].to_list())
+
+# pl.concat guarantees a's rows followed by b's rows
+print(pl.concat([a, b])["id"].to_list())
+```
+
+Output:
+
+```text
+[1, 2, 3, 4]
+[1, 2, 3, 4]
+```
+
+## pl.scan_parquet raises on missing columns by default; allow_missing_columns is deprecated
+
+Applies to: `pl.scan_parquet`
+
+When scanning several parquet sources whose schemas differ, `pl.scan_parquet` uses `missing_columns='raise'` by default. A later file that lacks a column from the first file therefore errors. The old `allow_missing_columns=True` flag is deprecated since 1.30.0. Pass `missing_columns='insert'` instead to fill the absent columns with nulls.
+
+```python
+import io
+import polars as pl
+
+def pq(df):
+    buf = io.BytesIO()
+    df.write_parquet(buf)
+    return buf.getvalue()
+
+srcs = [pq(pl.DataFrame({"a": [1], "b": ["x"]})), pq(pl.DataFrame({"a": [2]}))]
+
+try:
+    pl.scan_parquet(srcs).collect()
+except Exception as e:
+    print(type(e).__name__)
+
+print(pl.scan_parquet(srcs, missing_columns="insert").collect())
+```
+
+Output:
+
+```text
+ColumnNotFoundError
+shape: (2, 2)
+┌─────┬──────┐
+│ a   ┆ b    │
+│ --- ┆ ---  │
+│ i64 ┆ str  │
+╞═════╪══════╡
+│ 1   ┆ x    │
+│ 2   ┆ null │
+└─────┴──────┘
 ```
 
 ## pl.lit of a Python list is one List value, not a column

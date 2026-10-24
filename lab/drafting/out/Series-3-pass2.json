@@ -1,0 +1,66 @@
+{
+ "chunk": "Series-3-pass2",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pct_change returns a fraction and gives inf after a zero, not null",
+   "applies_to": [
+    "Series.pct_change"
+   ],
+   "trap": "`Series.pct_change` returns the change as a fraction (0.5 means +50%), not a percentage, so multiply by 100 yourself if you need percent. When the earlier value is 0, the result is `inf`, not null or an error, and that `inf` silently poisons later means and sums. Guard zero denominators explicitly, for example with `pl.when` on the shifted value, before you aggregate.",
+   "example": "import polars as pl\n\ns = pl.Series(\"price\", [0.0, 2.0, 3.0, 3.0])\nprint(s.pct_change().to_list())\nprint(s.pct_change().mean())\n\nsafe = s.to_frame().select(\n    pl.when(pl.col(\"price\").shift() == 0)\n    .then(None)\n    .otherwise(pl.col(\"price\").pct_change() * 100)\n    .alias(\"pct\")\n)\nprint(safe[\"pct\"].to_list())\nprint(safe[\"pct\"].mean())\n",
+   "output": "[None, inf, 0.5, 0.0]\ninf\n[None, None, 50.0, 0.0]\n25.0"
+  },
+  {
+   "title": "Integer pow keeps the integer dtype; use a float exponent for roots and negative powers",
+   "applies_to": [
+    "Series.pow"
+   ],
+   "trap": "`Series.pow` follows the dtype of the base unless the exponent is a float. An integer Series raised to an integer exponent stays integer. To raise integers to a negative power, the docstring says to cast the base or the exponent to float, for example pass `-1.0` instead of `-1`. A float exponent makes the result follow the exponent's float dtype.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [1, 2, 3, 4])\nsq = s.pow(2)\nprint(sq.dtype, sq.to_list())\n\nroot = s.pow(0.5)\nprint(root.dtype, root.to_list())\n\ninv = s.pow(-1.0)\nprint(inv.dtype, inv.to_list())\n",
+   "output": "Int64 [1, 4, 9, 16]\nFloat64 [1.0, 1.4142135623730951, 1.7320508075688772, 2.0]\nFloat64 [1.0, 0.5, 0.3333333333333333, 0.25]"
+  },
+  {
+   "title": "Rolling skew, kurtosis and map default min_samples to the full window",
+   "applies_to": [
+    "Series.rolling_map",
+    "Series.rolling_skew",
+    "Series.rolling_kurtosis"
+   ],
+   "trap": "For `Series.rolling_map`, `Series.rolling_skew` and `Series.rolling_kurtosis`, `min_samples=None` means `min_samples = window_size`. The first `window_size - 1` results are therefore null. Pass `min_samples` explicitly if you want partial windows. In `Series.rolling_map` the old `min_periods` parameter was renamed to `min_samples` in 1.21.0, so use the new name. These three methods are also marked unstable.",
+   "example": "import polars as pl\n\ns = pl.Series(\"v\", [1.0, 2.0, 3.0, 4.0])\nprint(s.rolling_map(lambda w: w.sum(), window_size=3).to_list())\nprint(s.rolling_map(lambda w: w.sum(), window_size=3, min_samples=1).to_list())\n",
+   "output": "[None, None, 6.0, 9.0]\n[1.0, 3.0, 6.0, 9.0]"
+  },
+  {
+   "title": "Series.std defaults to the sample standard deviation (ddof=1), unlike NumPy",
+   "applies_to": [
+    "Series.std"
+   ],
+   "trap": "`Series.std` divides by N - 1 by default (`ddof=1`). This matches pandas, but code ported from NumPy (`np.std` uses ddof=0) will get different numbers. Pass `ddof=0` when you need the population standard deviation.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, 3])\nprint(s.std())\nprint(s.std(ddof=0))\n",
+   "output": "1.0\n0.816496580927726"
+  },
+  {
+   "title": "rle_id numbers runs of consecutive values, not distinct values",
+   "applies_to": [
+    "Series.rle_id",
+    "Series.rle"
+   ],
+   "trap": "`Series.rle_id` starts a new ID every time the value changes. A value that reappears later gets a new ID, so it is not a distinct-value ID or a categorical code. A null also forms its own run. `Series.rle` likewise returns one row per run, not one row per unique value. Use these methods to group consecutive streaks; to count distinct values, use `Series.n_unique` or `Series.value_counts`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"state\", [\"a\", \"a\", \"b\", \"a\", None, \"a\"])\nprint(s.rle_id().to_list())\nprint(s.rle_id().max() + 1, s.n_unique())\nprint(s.rle().struct.unnest())\n",
+   "output": "[0, 0, 1, 2, 3, 4]\n5 3\nshape: (5, 2)\n┌─────┬───────┐\n│ len ┆ value │\n│ --- ┆ ---   │\n│ u32 ┆ str   │\n╞═════╪═══════╡\n│ 2   ┆ a     │\n│ 1   ┆ b     │\n│ 1   ┆ a     │\n│ 1   ┆ null  │\n│ 1   ┆ a     │\n└─────┴───────┘"
+  },
+  {
+   "title": "Series.set takes a boolean mask, Series.scatter takes positions; both are anti-patterns",
+   "applies_to": [
+    "Series.set",
+    "Series.scatter"
+   ],
+   "trap": "pandas users reach for `.loc` or `.iloc` style assignment. In Polars, `Series.set` expects a boolean mask the same length as the Series, while `Series.scatter` expects integer index positions; mixing them up gives wrong rows or an error. The docstrings call both an anti-pattern that can block optimization such as predicate pushdown. Prefer `pl.when(predicate).then(value).otherwise(...)` inside `DataFrame.select` or `DataFrame.with_columns`.",
+   "example": "import polars as pl\n\ns1 = pl.Series(\"a\", [1, 2, 3])\nprint(s1.set(s1 == 2, 10).to_list())\n\ns2 = pl.Series(\"a\", [1, 2, 3])\nprint(s2.scatter([0], [99]).to_list())\n\nout = pl.Series(\"a\", [1, 2, 3]).to_frame().select(\n    pl.when(pl.col(\"a\") == 2).then(10).otherwise(pl.col(\"a\")).alias(\"a\")\n)\nprint(out[\"a\"].to_list())\n",
+   "output": "[1, 10, 3]\n[99, 2, 3]\n[1, 10, 3]"
+  }
+ ],
+ "failed": []
+}

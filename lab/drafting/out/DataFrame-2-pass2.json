@@ -1,0 +1,83 @@
+{
+ "chunk": "DataFrame-2-pass2",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "rename raises on unknown columns and never mutates in place",
+   "applies_to": [
+    "DataFrame.rename"
+   ],
+   "trap": "pandas `rename(columns=...)` silently ignores keys that are not columns. `DataFrame.rename` defaults to `strict=True` and raises if any key in the mapping is not in the schema. Pass `strict=False` when the mapping may contain absent names. It also returns a new frame, so you must reassign the result.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1], \"b\": [2]})\ntry:\n    df.rename({\"a\": \"x\", \"zzz\": \"y\"})\nexcept Exception as e:\n    print(type(e).__name__)\n\nout = df.rename({\"a\": \"x\", \"zzz\": \"y\"}, strict=False)\nprint(out.columns)\nprint(df.columns)  # original unchanged\n",
+   "output": "ColumnNotFoundError\n['x', 'b']\n['a', 'b']"
+  },
+  {
+   "title": "to_dict returns Series values by default, not lists",
+   "applies_to": [
+    "DataFrame.to_dict"
+   ],
+   "trap": "Coming from pandas, you may expect `DataFrame.to_dict` to give plain Python values. By default (`as_series=True`) each value is a Polars `Series`. That breaks JSON serialization and equality checks against lists. Pass `as_series=False` to get `dict[str, list]`, or use `DataFrame.to_dicts` for row-wise dicts.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [\"x\", None]})\nd = df.to_dict()\nprint(type(d[\"a\"]).__name__)\nprint(d[\"a\"] == [1, 2])  # elementwise Series, not a bool\n\nprint(df.to_dict(as_series=False))\nprint(df.to_dicts())\n",
+   "output": "Series\nshape: (2,)\nSeries: 'a' [bool]\n[\n\ttrue\n\ttrue\n]\n{'a': [1, 2], 'b': ['x', None]}\n[{'a': 1, 'b': 'x'}, {'a': 2, 'b': None}]"
+  },
+  {
+   "title": "row(by_predicate=...) errors unless exactly one row matches",
+   "applies_to": [
+    "DataFrame.row"
+   ],
+   "trap": "`DataFrame.row` with `by_predicate` is not a filter. If the predicate matches more than one row it raises `TooManyRowsReturnedError`. If it matches zero rows it raises `NoRowsReturnedError`. To get all matching rows, use `DataFrame.filter` followed by `DataFrame.rows`. Never call `DataFrame.row` in a loop to iterate; use `DataFrame.iter_rows` instead.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"k\": [\"a\", \"a\", \"b\"], \"v\": [1, 2, 3]})\nfor key in [\"a\", \"z\"]:\n    try:\n        df.row(by_predicate=pl.col(\"k\") == key)\n    except Exception as e:\n        print(key, type(e).__name__)\n\nprint(df.row(by_predicate=pl.col(\"k\") == \"b\", named=True))\nprint(df.filter(pl.col(\"k\") == \"a\").rows(named=True))\n",
+   "output": "a TooManyRowsReturnedError\nz NoRowsReturnedError\n{'k': 'b', 'v': 3}\n[{'k': 'a', 'v': 1}, {'k': 'a', 'v': 2}]"
+  },
+  {
+   "title": "merge_sorted silently produces garbage if inputs are not sorted ascending",
+   "applies_to": [
+    "DataFrame.merge_sorted"
+   ],
+   "trap": "`DataFrame.merge_sorted` does not sort anything. It assumes both frames are already sorted ascending by `key`. Unsorted input gives an unsorted, meaningless result with no error. Sort both frames by the key first, and make sure both frames have equal schemas. Row order among equal keys is not guaranteed.",
+   "example": "import polars as pl\n\ndf0 = pl.DataFrame({\"k\": [5, 1]})\ndf1 = pl.DataFrame({\"k\": [2, 4]})\n\nbad = df0.merge_sorted(df1, key=\"k\")\nprint(bad.get_column(\"k\").to_list())\n\ngood = df0.sort(\"k\").merge_sorted(df1.sort(\"k\"), key=\"k\")\nprint(good.get_column(\"k\").to_list())\n",
+   "output": "[2, 4, 5, 1]\n[1, 2, 4, 5]"
+  },
+  {
+   "title": "match_to_schema forbids integer upcasts by default (and is unstable)",
+   "applies_to": [
+    "DataFrame.match_to_schema"
+   ],
+   "trap": "`DataFrame.match_to_schema` is strict by default. Missing columns, extra columns and any dtype difference raise. That includes a harmless `Int32` to `Int64` widening, because `integer_cast='forbid'` (the same applies to `float_cast`). Opt in explicitly with `integer_cast='upcast'`, `missing_columns='insert'` or `extra_columns='ignore'` as needed. The API is marked unstable.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": pl.Series([1, 2], dtype=pl.Int32), \"b\": [\"x\", \"y\"]})\ntarget = {\"a\": pl.Int64, \"b\": pl.String}\ntry:\n    df.match_to_schema(target)\nexcept Exception as e:\n    print(type(e).__name__)\n\nout = df.match_to_schema(target, integer_cast=\"upcast\")\nprint(out.schema)\n",
+   "output": "SchemaError\nSchema({'a': Int64, 'b': String})"
+  },
+  {
+   "title": "Frame-wide aggregations keep non-numeric columns as null",
+   "applies_to": [
+    "DataFrame.sum",
+    "DataFrame.median",
+    "DataFrame.std",
+    "DataFrame.product"
+   ],
+   "trap": "`DataFrame.sum`, `DataFrame.median` and `DataFrame.std` do not drop non-numeric columns the way pandas `numeric_only=True` does, and they do not raise either. String columns come back as a `null` value in the one-row result. Downstream code can then read null as a real aggregate. Select numeric columns first, for example with `cs.numeric`. Note also that `DataFrame.product` turns a Boolean column into `i64`.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"x\": [1, 2, 3], \"s\": [\"a\", \"b\", \"c\"], \"f\": [True, True, False]})\nprint(df.sum())\nprint(df.select(cs.numeric()).median())\nprint(df.product().schema)\n",
+   "output": "shape: (1, 3)\n┌─────┬──────┬─────┐\n│ x   ┆ s    ┆ f   │\n│ --- ┆ ---  ┆ --- │\n│ i64 ┆ str  ┆ u32 │\n╞═════╪══════╪═════╡\n│ 6   ┆ null ┆ 2   │\n└─────┴──────┴─────┘\nshape: (1, 1)\n┌─────┐\n│ x   │\n│ --- │\n│ f64 │\n╞═════╡\n│ 2.0 │\n└─────┘\nSchema({'x': Int64, 's': Null, 'f': Int64})"
+  },
+  {
+   "title": "sample is unseeded and its row order is not random unless shuffle=True",
+   "applies_to": [
+    "DataFrame.sample"
+   ],
+   "trap": "`DataFrame.sample` draws a new random seed on every call unless you pass `seed`, so results change between runs. Without arguments it returns a single row (`n` defaults to 1). With the default `shuffle=False`, the order of the returned rows is neither stable nor fully random. Pass `shuffle=True` if downstream code relies on random order, for example train/test splits by position.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": list(range(10))})\nprint(df.sample().height)  # default n=1\n\ns1 = df.sample(fraction=0.5, seed=42, shuffle=True)\ns2 = df.sample(fraction=0.5, seed=42, shuffle=True)\nprint(s1.height, s1.equals(s2))\n",
+   "output": "1\n5 True"
+  },
+  {
+   "title": "serialize returns binary bytes by default, not JSON",
+   "applies_to": [
+    "DataFrame.serialize"
+   ],
+   "trap": "The `DataFrame.serialize` docstring summary mentions JSON, but the default `format='binary'` returns `bytes`. Pass `format='json'` to get a string. To read binary output back, wrap the bytes in a file-like object for `DataFrame.deserialize`. The serialized form is not stable across Polars versions, so do not use it for long-term storage.",
+   "example": "import io\nimport polars as pl\n\ndf = pl.DataFrame({\"foo\": [1, 2], \"bar\": [3, 4]})\nb = df.serialize()\nprint(type(b).__name__)\nprint(type(df.serialize(format=\"json\")).__name__)\n\nback = pl.DataFrame.deserialize(io.BytesIO(b))\nprint(back.equals(df))\n",
+   "output": "bytes\nstr\nTrue"
+  }
+ ],
+ "failed": []
+}

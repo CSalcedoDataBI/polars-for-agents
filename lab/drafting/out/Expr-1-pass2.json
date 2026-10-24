@@ -1,0 +1,57 @@
+{
+ "chunk": "Expr-1-pass2",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "diff(null_behavior=\"drop\") shortens the column and breaks with_columns",
+   "applies_to": [
+    "Expr.diff"
+   ],
+   "trap": "By default `Expr.diff` keeps the input length and puts `null` in the first `n` rows, like pandas. With `null_behavior=\"drop\"` those rows are removed, so the result has `n` fewer rows. That shorter expression cannot be added next to the original columns with `DataFrame.with_columns`, which raises an error. Keep the default `\"ignore\"` when adding a column. Use `\"drop\"` only in a `DataFrame.select` where every output has the same shortened length.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [20, 10, 30, 25, 35]})\n\ntry:\n    df.with_columns(d=pl.col(\"x\").diff(null_behavior=\"drop\"))\nexcept Exception as e:\n    print(type(e).__name__)\n\n# Right: keep the length (first row is null) when adding a column\nprint(df.with_columns(d=pl.col(\"x\").diff()))\n\n# \"drop\" is fine when the output stands alone\nprint(df.select(pl.col(\"x\").diff(null_behavior=\"drop\")))\n",
+   "output": "ShapeError\nshape: (5, 2)\n┌─────┬──────┐\n│ x   ┆ d    │\n│ --- ┆ ---  │\n│ i64 ┆ i64  │\n╞═════╪══════╡\n│ 20  ┆ null │\n│ 10  ┆ -10  │\n│ 30  ┆ 20   │\n│ 25  ┆ -5   │\n│ 35  ┆ 10   │\n└─────┴──────┘\nshape: (4, 1)\n┌─────┐\n│ x   │\n│ --- │\n│ i64 │\n╞═════╡\n│ -10 │\n│ 20  │\n│ -5  │\n│ 10  │\n└─────┘"
+  },
+  {
+   "title": "bitwise_and/or/xor are aggregations, not element-wise operators",
+   "applies_to": [
+    "Expr.bitwise_and",
+    "Expr.bitwise_or",
+    "Expr.bitwise_xor",
+    "Expr.and_",
+    "Expr.or_",
+    "Expr.xor"
+   ],
+   "trap": "`Expr.bitwise_and`, `Expr.bitwise_or` and `Expr.bitwise_xor` take no argument. Each one reduces a whole column (or each group) to a single value. Code like `pl.col(\"a\").bitwise_and(pl.col(\"b\"))` fails. Using it as a row-wise combine of two columns is wrong. For element-wise bit operations between two integer columns, use `Expr.and_`, `Expr.or_` and `Expr.xor`, or the operators `&`, `|` and `^`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [12, 10], \"b\": [10, 6]})\n\ntry:\n    df.select(pl.col(\"a\").bitwise_and(pl.col(\"b\")))\nexcept Exception as e:\n    print(type(e).__name__)\n\n# bitwise_and reduces the column to ONE value: 12 & 10 = 8\nprint(df.select(pl.col(\"a\").bitwise_and()))\n\n# Element-wise: row by row a & b -> [8, 2]\nprint(df.select(pl.col(\"a\").and_(pl.col(\"b\")).alias(\"elementwise\")))\n",
+   "output": "TypeError\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 8   │\n└─────┘\nshape: (2, 1)\n┌─────────────┐\n│ elementwise │\n│ ---         │\n│ i64         │\n╞═════════════╡\n│ 8           │\n│ 2           │\n└─────────────┘"
+  },
+  {
+   "title": "Out-of-domain trig results are NaN/inf, not null",
+   "applies_to": [
+    "Expr.arccos",
+    "Expr.arcsin",
+    "Expr.arctanh",
+    "Expr.arccosh",
+    "Expr.is_nan",
+    "Expr.fill_nan"
+   ],
+   "trap": "The inverse trig functions always return Float64 and never raise for bad inputs. `Expr.arctanh` of 1.0 gives `inf`, and `Expr.arccos` of 2.0 gives NaN. Polars treats NaN as a float value, not as missing, so `Expr.is_null` and `Expr.fill_null` will not catch these results. Detect them with `Expr.is_nan` or `Expr.is_finite`. Convert them with `Expr.fill_nan(None)` if you want them to behave as nulls.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [0.5, 2.0, 1.0]})\nres = df.with_columns(\n    pl.col(\"a\").arccos().alias(\"acos\"),\n    pl.col(\"a\").arctanh().alias(\"atanh\"),\n)\nprint(res)\nprint(res.select(\n    pl.col(\"acos\").is_null().alias(\"acos_is_null\"),\n    pl.col(\"acos\").is_nan().alias(\"acos_is_nan\"),\n    pl.col(\"atanh\").is_finite().alias(\"atanh_finite\"),\n))\n# Turn NaN into a real null so null handling applies\nprint(res.select(pl.col(\"acos\").fill_nan(None).is_null()))\n",
+   "output": "shape: (3, 3)\n┌─────┬──────────┬──────────┐\n│ a   ┆ acos     ┆ atanh    │\n│ --- ┆ ---      ┆ ---      │\n│ f64 ┆ f64      ┆ f64      │\n╞═════╪══════════╪══════════╡\n│ 0.5 ┆ 1.047198 ┆ 0.549306 │\n│ 2.0 ┆ NaN      ┆ NaN      │\n│ 1.0 ┆ 0.0      ┆ inf      │\n└─────┴──────────┴──────────┘\nshape: (3, 3)\n┌──────────────┬─────────────┬──────────────┐\n│ acos_is_null ┆ acos_is_nan ┆ atanh_finite │\n│ ---          ┆ ---         ┆ ---          │\n│ bool         ┆ bool        ┆ bool         │\n╞══════════════╪═════════════╪══════════════╡\n│ false        ┆ false       ┆ true         │\n│ false        ┆ true        ┆ false        │\n│ false        ┆ false       ┆ false        │\n└──────────────┴─────────────┴──────────────┘\nshape: (3, 1)\n┌───────┐\n│ acos  │\n│ ---   │\n│ bool  │\n╞═══════╡\n│ false │\n│ true  │\n│ false │\n└───────┘"
+  },
+  {
+   "title": "cum_sum leaves null rows null and widens small ints to Int64",
+   "applies_to": [
+    "Expr.cum_sum",
+    "Expr.cum_prod",
+    "Expr.cum_max",
+    "Expr.cum_min"
+   ],
+   "trap": "`Expr.cum_sum` and the other cumulative functions skip nulls, but the output is still `null` at those positions. It does not carry the running total forward, as a SQL running SUM would. If every row needs the total so far, chain `.fill_null(strategy=\"forward\")`. `Expr.cum_sum` and `Expr.cum_prod` also cast Int8, UInt8, Int16 and UInt16 input to Int64. The output schema therefore differs from the input schema.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [None, 10, None, 8]}, schema={\"v\": pl.Int8})\nout = df.with_columns(\n    pl.col(\"v\").cum_sum().alias(\"cs\"),\n    pl.col(\"v\").cum_sum().fill_null(strategy=\"forward\").alias(\"cs_filled\"),\n)\nprint(out)\nprint(out.schema)\n",
+   "output": "shape: (4, 3)\n┌──────┬──────┬───────────┐\n│ v    ┆ cs   ┆ cs_filled │\n│ ---  ┆ ---  ┆ ---       │\n│ i8   ┆ i64  ┆ i64       │\n╞══════╪══════╪═══════════╡\n│ null ┆ null ┆ null      │\n│ 10   ┆ 10   ┆ 10        │\n│ null ┆ null ┆ 10        │\n│ 8    ┆ 18   ┆ 18        │\n└──────┴──────┴───────────┘\nSchema({'v': Int8, 'cs': Int64, 'cs_filled': Int64})"
+  }
+ ],
+ "failed": []
+}

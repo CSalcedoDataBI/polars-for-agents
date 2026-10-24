@@ -4,6 +4,325 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
+## DataFrame.count counts non-null values per column, not rows
+
+Applies to: `DataFrame.count`, `DataFrame.height`
+
+Coming from SQL `COUNT(*)`, agents call `DataFrame.count` to get the number of rows. It actually returns a one-row DataFrame with the number of **non-null** values in each column, so columns that contain nulls report less than the row count. For the row count use `DataFrame.height`, or `df.select(pl.len()).item()`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, None, 3], "b": [None, None, 6]})
+
+# Wrong: this is a per-column non-null count, not a row count
+print(df.count())
+
+# Right: number of rows
+print(df.height)
+print(df.select(pl.len()).item())
+```
+
+Output:
+
+```text
+shape: (1, 2)
+┌─────┬─────┐
+│ a   ┆ b   │
+│ --- ┆ --- │
+│ u32 ┆ u32 │
+╞═════╪═════╡
+│ 2   ┆ 1   │
+└─────┴─────┘
+3
+3
+```
+
+## DataFrame.item without arguments requires a 1x1 frame
+
+Applies to: `DataFrame.item`
+
+`DataFrame.item()` with no arguments is `df[0, 0]` plus a check that the shape is (1, 1). It raises on any larger frame instead of returning the first value. Reduce to a single value first, for example `df.select(pl.col("a").sum()).item()`. To read one cell, pass both `row` and `column`, as in `df.item(1, "a")`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+
+try:
+    df.item()
+except Exception as e:
+    print(type(e).__name__)
+
+# Right: aggregate to 1x1 first, or address an explicit cell
+print(df.select(pl.col("a").sum()).item())
+print(df.item(1, "b"))
+```
+
+Output:
+
+```text
+ValueError
+6
+5
+```
+
+## DataFrame.glimpse returns None by default; use return_type to capture it
+
+Applies to: `DataFrame.glimpse`
+
+By default `DataFrame.glimpse` prints to stdout and returns `None`, so `summary = df.glimpse()` stores nothing. Pass `return_type="string"` to get the text or `return_type="frame"` to get a DataFrame. `return_type="self"` prints and returns the original frame, which is useful mid-chain. The old boolean `return_as_string` parameter was renamed `return_type` in 1.35.0, so write `return_type` in new code.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1.0, 2.5], "b": ["x", None]})
+
+res = df.glimpse()
+print(res is None)
+
+text = df.glimpse(return_type="string")
+print(type(text).__name__)
+
+same = df.glimpse(return_type="self")
+print(same.shape)
+```
+
+Output:
+
+```text
+Rows: 2
+Columns: 2
+$ a <f64> 1.0, 2.5
+$ b <str> 'x', null
+
+True
+str
+Rows: 2
+Columns: 2
+$ a <f64> 1.0, 2.5
+$ b <str> 'x', null
+
+(2, 2)
+```
+
+## Sort the index column before group_by_dynamic, and mind the closed='left' windows
+
+Applies to: `DataFrame.group_by_dynamic`
+
+`DataFrame.group_by_dynamic` requires the index column to be sorted ascending, and within each group if `group_by` is passed. Feeding it unordered data is a misuse, so call `DataFrame.sort` on the index first. Windows default to `closed='left'` (`[start, start + period)`), labelled by their left edge, so a point exactly on a boundary falls into the later window. Pandas or SQL users who expect right-closed bins get different sums. Set `closed` and `label` explicitly when boundary semantics matter.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"t": [4, 0, 2, 1, 3, 5], "v": [1, 1, 1, 1, 1, 1]})
+df = df.sort("t")  # index column must be sorted ascending
+
+left = df.group_by_dynamic("t", every="2i").agg(pl.col("v").sum())
+right = df.group_by_dynamic("t", every="2i", closed="right").agg(
+    pl.col("v").sum()
+)
+print(left)
+print(right)
+```
+
+Output:
+
+```text
+shape: (3, 2)
+┌─────┬─────┐
+│ t   ┆ v   │
+│ --- ┆ --- │
+│ i64 ┆ i64 │
+╞═════╪═════╡
+│ 0   ┆ 2   │
+│ 2   ┆ 2   │
+│ 4   ┆ 2   │
+└─────┴─────┘
+shape: (4, 2)
+┌─────┬─────┐
+│ t   ┆ v   │
+│ --- ┆ --- │
+│ i64 ┆ i64 │
+╞═════╪═════╡
+│ -2  ┆ 1   │
+│ 0   ┆ 2   │
+│ 2   ┆ 2   │
+│ 4   ┆ 1   │
+└─────┴─────┘
+```
+
+## join_asof needs both sides sorted on the key and defaults to a backward search
+
+Applies to: `DataFrame.join_asof`
+
+`DataFrame.join_asof` matches on the nearest key, not equal keys, and both frames must be sorted by the `on` key (within each `by` group). Sort both sides with `DataFrame.sort` first. The default `strategy='backward'` picks the last right row whose key is less than or equal to the left key, so left rows before the first right key get nulls. Exact matches are allowed (`allow_exact_matches=True`). Without a `tolerance`, a very distant match is still accepted, so set `tolerance` when stale matches would be wrong.
+
+```python
+import polars as pl
+
+left = pl.DataFrame({"t": [5, 1, 10]}).sort("t")
+right = pl.DataFrame({"t": [2, 6], "price": [100, 200]}).sort("t")
+
+print(left.join_asof(right, on="t"))  # backward: t=1 gets null
+print(left.join_asof(right, on="t", strategy="forward"))
+print(left.join_asof(right, on="t", tolerance=1))  # t=10 too far -> null
+```
+
+Output:
+
+```text
+shape: (3, 2)
+┌─────┬───────┐
+│ t   ┆ price │
+│ --- ┆ ---   │
+│ i64 ┆ i64   │
+╞═════╪═══════╡
+│ 1   ┆ null  │
+│ 5   ┆ 100   │
+│ 10  ┆ 200   │
+└─────┴───────┘
+shape: (3, 2)
+┌─────┬───────┐
+│ t   ┆ price │
+│ --- ┆ ---   │
+│ i64 ┆ i64   │
+╞═════╪═══════╡
+│ 1   ┆ 100   │
+│ 5   ┆ 200   │
+│ 10  ┆ null  │
+└─────┴───────┘
+shape: (3, 2)
+┌─────┬───────┐
+│ t   ┆ price │
+│ --- ┆ ---   │
+│ i64 ┆ i64   │
+╞═════╪═══════╡
+│ 1   ┆ null  │
+│ 5   ┆ null  │
+│ 10  ┆ null  │
+└─────┴───────┘
+```
+
+## join_where is an experimental inner join that does not preserve row order
+
+Applies to: `DataFrame.join_where`
+
+`DataFrame.join_where` always performs an inner join on the AND of all predicates. A row from either side can appear several times. The row order of the inputs is not preserved, and the API is marked experimental. Do not rely on the output order: sort the result explicitly with `DataFrame.sort`. Column names that occur in both tables must be referenced with the suffix (default `_right`) in the predicates.
+
+```python
+import polars as pl
+
+east = pl.DataFrame({"id": [1, 2, 3], "dur": [120, 140, 160]})
+west = pl.DataFrame({"t_id": [10, 20, 30], "time": [130, 150, 170]})
+
+out = east.join_where(west, pl.col("dur") < pl.col("time"))
+# Order is not guaranteed: sort explicitly before relying on it
+print(out.sort(["id", "t_id"]))
+```
+
+Output:
+
+```text
+shape: (6, 4)
+┌─────┬─────┬──────┬──────┐
+│ id  ┆ dur ┆ t_id ┆ time │
+│ --- ┆ --- ┆ ---  ┆ ---  │
+│ i64 ┆ i64 ┆ i64  ┆ i64  │
+╞═════╪═════╪══════╪══════╡
+│ 1   ┆ 120 ┆ 10   ┆ 130  │
+│ 1   ┆ 120 ┆ 20   ┆ 150  │
+│ 1   ┆ 120 ┆ 30   ┆ 170  │
+│ 2   ┆ 140 ┆ 20   ┆ 150  │
+│ 2   ┆ 140 ┆ 30   ┆ 170  │
+│ 3   ┆ 160 ┆ 30   ┆ 170  │
+└─────┴─────┴──────┴──────┘
+```
+
+## DataFrame.interpolate turns integers into floats and leaves edge nulls
+
+Applies to: `DataFrame.interpolate`
+
+`DataFrame.interpolate` applies linear interpolation, and integer columns come back as `Float64`. Nulls at the beginning and end of a column stay null, because only interior gaps are filled. Code that expects integers or no remaining nulls then breaks. Cast back with `DataFrame.cast` if needed, and fill edges separately, for example with `Expr.forward_fill` or `Expr.backward_fill`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [None, 2, None, 4, None]})
+out = df.interpolate()
+print(out.dtypes)
+print(out)
+
+fixed = out.with_columns(
+    pl.col("a").backward_fill().forward_fill().cast(pl.Int64)
+)
+print(fixed)
+```
+
+Output:
+
+```text
+[Float64]
+shape: (5, 1)
+┌──────┐
+│ a    │
+│ ---  │
+│ f64  │
+╞══════╡
+│ null │
+│ 2.0  │
+│ 3.0  │
+│ 4.0  │
+│ null │
+└──────┘
+shape: (5, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 2   │
+│ 2   │
+│ 3   │
+│ 4   │
+│ 4   │
+└─────┘
+```
+
+## DataFrame.map_rows loses column names and is slow; prefer expressions
+
+Applies to: `DataFrame.map_rows`
+
+`DataFrame.map_rows` passes each row to a Python UDF as a plain tuple, so you must index columns by position. It cannot track column names, so the result does not keep or reuse your column names. It is also much slower than native expressions. Write the logic as an expression in `DataFrame.with_columns`. If you truly need a per-value UDF, use `Expr.map_elements`, which preserves names.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"foo": [1, 2, 3], "bar": [-1, 5, 8]})
+
+slow = df.map_rows(lambda row: row[0] + row[1])
+print(slow.columns)  # original names are gone
+
+fast = df.with_columns((pl.col("foo") + pl.col("bar")).alias("total"))
+print(fast)
+```
+
+Output:
+
+```text
+['map']
+shape: (3, 3)
+┌─────┬─────┬───────┐
+│ foo ┆ bar ┆ total │
+│ --- ┆ --- ┆ ---   │
+│ i64 ┆ i64 ┆ i64   │
+╞═════╪═════╪═══════╡
+│ 1   ┆ -1  ┆ 0     │
+│ 2   ┆ 5   ┆ 7     │
+│ 3   ┆ 8   ┆ 11    │
+└─────┴─────┴───────┘
+```
+
 ## Comparisons against null yield null, so `filter` silently drops those rows
 
 Applies to: `DataFrame.filter`
@@ -241,6 +560,237 @@ Output:
 [{'a': 4, 'b': 2}]
 ```
 
+## rename raises on unknown columns and never mutates in place
+
+Applies to: `DataFrame.rename`
+
+pandas `rename(columns=...)` silently ignores keys that are not columns. `DataFrame.rename` defaults to `strict=True` and raises if any key in the mapping is not in the schema. Pass `strict=False` when the mapping may contain absent names. It also returns a new frame, so you must reassign the result.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1], "b": [2]})
+try:
+    df.rename({"a": "x", "zzz": "y"})
+except Exception as e:
+    print(type(e).__name__)
+
+out = df.rename({"a": "x", "zzz": "y"}, strict=False)
+print(out.columns)
+print(df.columns)  # original unchanged
+```
+
+Output:
+
+```text
+ColumnNotFoundError
+['x', 'b']
+['a', 'b']
+```
+
+## to_dict returns Series values by default, not lists
+
+Applies to: `DataFrame.to_dict`
+
+Coming from pandas, you may expect `DataFrame.to_dict` to give plain Python values. By default (`as_series=True`) each value is a Polars `Series`. That breaks JSON serialization and equality checks against lists. Pass `as_series=False` to get `dict[str, list]`, or use `DataFrame.to_dicts` for row-wise dicts.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2], "b": ["x", None]})
+d = df.to_dict()
+print(type(d["a"]).__name__)
+print(d["a"] == [1, 2])  # elementwise Series, not a bool
+
+print(df.to_dict(as_series=False))
+print(df.to_dicts())
+```
+
+Output:
+
+```text
+Series
+shape: (2,)
+Series: 'a' [bool]
+[
+	true
+	true
+]
+{'a': [1, 2], 'b': ['x', None]}
+[{'a': 1, 'b': 'x'}, {'a': 2, 'b': None}]
+```
+
+## row(by_predicate=...) errors unless exactly one row matches
+
+Applies to: `DataFrame.row`
+
+`DataFrame.row` with `by_predicate` is not a filter. If the predicate matches more than one row it raises `TooManyRowsReturnedError`. If it matches zero rows it raises `NoRowsReturnedError`. To get all matching rows, use `DataFrame.filter` followed by `DataFrame.rows`. Never call `DataFrame.row` in a loop to iterate; use `DataFrame.iter_rows` instead.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"k": ["a", "a", "b"], "v": [1, 2, 3]})
+for key in ["a", "z"]:
+    try:
+        df.row(by_predicate=pl.col("k") == key)
+    except Exception as e:
+        print(key, type(e).__name__)
+
+print(df.row(by_predicate=pl.col("k") == "b", named=True))
+print(df.filter(pl.col("k") == "a").rows(named=True))
+```
+
+Output:
+
+```text
+a TooManyRowsReturnedError
+z NoRowsReturnedError
+{'k': 'b', 'v': 3}
+[{'k': 'a', 'v': 1}, {'k': 'a', 'v': 2}]
+```
+
+## merge_sorted silently produces garbage if inputs are not sorted ascending
+
+Applies to: `DataFrame.merge_sorted`
+
+`DataFrame.merge_sorted` does not sort anything. It assumes both frames are already sorted ascending by `key`. Unsorted input gives an unsorted, meaningless result with no error. Sort both frames by the key first, and make sure both frames have equal schemas. Row order among equal keys is not guaranteed.
+
+```python
+import polars as pl
+
+df0 = pl.DataFrame({"k": [5, 1]})
+df1 = pl.DataFrame({"k": [2, 4]})
+
+bad = df0.merge_sorted(df1, key="k")
+print(bad.get_column("k").to_list())
+
+good = df0.sort("k").merge_sorted(df1.sort("k"), key="k")
+print(good.get_column("k").to_list())
+```
+
+Output:
+
+```text
+[2, 4, 5, 1]
+[1, 2, 4, 5]
+```
+
+## match_to_schema forbids integer upcasts by default (and is unstable)
+
+Applies to: `DataFrame.match_to_schema`
+
+`DataFrame.match_to_schema` is strict by default. Missing columns, extra columns and any dtype difference raise. That includes a harmless `Int32` to `Int64` widening, because `integer_cast='forbid'` (the same applies to `float_cast`). Opt in explicitly with `integer_cast='upcast'`, `missing_columns='insert'` or `extra_columns='ignore'` as needed. The API is marked unstable.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": pl.Series([1, 2], dtype=pl.Int32), "b": ["x", "y"]})
+target = {"a": pl.Int64, "b": pl.String}
+try:
+    df.match_to_schema(target)
+except Exception as e:
+    print(type(e).__name__)
+
+out = df.match_to_schema(target, integer_cast="upcast")
+print(out.schema)
+```
+
+Output:
+
+```text
+SchemaError
+Schema({'a': Int64, 'b': String})
+```
+
+## Frame-wide aggregations keep non-numeric columns as null
+
+Applies to: `DataFrame.sum`, `DataFrame.median`, `DataFrame.std`, `DataFrame.product`
+
+`DataFrame.sum`, `DataFrame.median` and `DataFrame.std` do not drop non-numeric columns the way pandas `numeric_only=True` does, and they do not raise either. String columns come back as a `null` value in the one-row result. Downstream code can then read null as a real aggregate. Select numeric columns first, for example with `cs.numeric`. Note also that `DataFrame.product` turns a Boolean column into `i64`.
+
+```python
+import polars as pl
+import polars.selectors as cs
+
+df = pl.DataFrame({"x": [1, 2, 3], "s": ["a", "b", "c"], "f": [True, True, False]})
+print(df.sum())
+print(df.select(cs.numeric()).median())
+print(df.product().schema)
+```
+
+Output:
+
+```text
+shape: (1, 3)
+┌─────┬──────┬─────┐
+│ x   ┆ s    ┆ f   │
+│ --- ┆ ---  ┆ --- │
+│ i64 ┆ str  ┆ u32 │
+╞═════╪══════╪═════╡
+│ 6   ┆ null ┆ 2   │
+└─────┴──────┴─────┘
+shape: (1, 1)
+┌─────┐
+│ x   │
+│ --- │
+│ f64 │
+╞═════╡
+│ 2.0 │
+└─────┘
+Schema({'x': Int64, 's': Null, 'f': Int64})
+```
+
+## sample is unseeded and its row order is not random unless shuffle=True
+
+Applies to: `DataFrame.sample`
+
+`DataFrame.sample` draws a new random seed on every call unless you pass `seed`, so results change between runs. Without arguments it returns a single row (`n` defaults to 1). With the default `shuffle=False`, the order of the returned rows is neither stable nor fully random. Pass `shuffle=True` if downstream code relies on random order, for example train/test splits by position.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": list(range(10))})
+print(df.sample().height)  # default n=1
+
+s1 = df.sample(fraction=0.5, seed=42, shuffle=True)
+s2 = df.sample(fraction=0.5, seed=42, shuffle=True)
+print(s1.height, s1.equals(s2))
+```
+
+Output:
+
+```text
+1
+5 True
+```
+
+## serialize returns binary bytes by default, not JSON
+
+Applies to: `DataFrame.serialize`
+
+The `DataFrame.serialize` docstring summary mentions JSON, but the default `format='binary'` returns `bytes`. Pass `format='json'` to get a string. To read binary output back, wrap the bytes in a file-like object for `DataFrame.deserialize`. The serialized form is not stable across Polars versions, so do not use it for long-term storage.
+
+```python
+import io
+import polars as pl
+
+df = pl.DataFrame({"foo": [1, 2], "bar": [3, 4]})
+b = df.serialize()
+print(type(b).__name__)
+print(type(df.serialize(format="json")).__name__)
+
+back = pl.DataFrame.deserialize(io.BytesIO(b))
+print(back.equals(df))
+```
+
+Output:
+
+```text
+bytes
+str
+True
+```
+
 ## DataFrame.insert_column mutates the frame in place while DataFrame.hstack does not
 
 Applies to: `DataFrame.insert_column`, `DataFrame.hstack`
@@ -461,6 +1011,191 @@ max [4.0, 6.0]
 [2.5, 6.0]
 [2.5, None]
 ['a', 'b', 'row_max'] [4.0, 6.0]
+```
+
+## Pass include_header=True to DataFrame.transpose or the column names are lost
+
+Applies to: `DataFrame.transpose`
+
+By default `DataFrame.transpose` uses `include_header=False`. The original column names are discarded and the new columns get auto-generated names `column_0`, `column_1`, and so on. There is no index to carry the labels as there is in pandas. Pass `include_header=True` (and optionally `header_name=`) to keep the old names as a column, and use `column_names=` to name the value columns.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
+
+# Default: the names 'a' and 'b' are gone
+print(df.transpose())
+
+# Keep the names as a column and name the value columns
+print(df.transpose(include_header=True, header_name="field", column_names=["r0", "r1"]))
+```
+
+Output:
+
+```text
+shape: (2, 2)
+┌──────────┬──────────┐
+│ column_0 ┆ column_1 │
+│ ---      ┆ ---      │
+│ i64      ┆ i64      │
+╞══════════╪══════════╡
+│ 1        ┆ 2        │
+│ 3        ┆ 4        │
+└──────────┴──────────┘
+shape: (2, 3)
+┌───────┬─────┬─────┐
+│ field ┆ r0  ┆ r1  │
+│ ---   ┆ --- ┆ --- │
+│ str   ┆ i64 ┆ i64 │
+╞═══════╪═════╪═════╡
+│ a     ┆ 1   ┆ 2   │
+│ b     ┆ 3   ┆ 4   │
+└───────┴─────┴─────┘
+```
+
+## DataFrame.var keeps non-numeric columns as null and uses ddof=1
+
+Applies to: `DataFrame.var`
+
+`DataFrame.var` does not drop non-numeric columns the way pandas `numeric_only=True` would. String columns stay in the result with a `null` value. It also computes the sample variance (`ddof=1`), not numpy's population default (`ddof=0`). Select numeric columns first (for example with `cs.numeric`) and pass `ddof=0` explicitly if you need the population variance.
+
+```python
+import polars as pl
+import polars.selectors as cs
+
+df = pl.DataFrame({"x": [1, 2, 3], "s": ["a", "b", "c"]})
+
+# String column 's' is kept as null; x uses ddof=1 -> 1.0
+print(df.var())
+
+# Numeric columns only, population variance -> 0.666667
+print(df.select(cs.numeric()).var(ddof=0))
+```
+
+Output:
+
+```text
+shape: (1, 2)
+┌─────┬──────┐
+│ x   ┆ s    │
+│ --- ┆ ---  │
+│ f64 ┆ str  │
+╞═════╪══════╡
+│ 1.0 ┆ null │
+└─────┴──────┘
+shape: (1, 1)
+┌──────────┐
+│ x        │
+│ ---      │
+│ f64      │
+╞══════════╡
+│ 0.666667 │
+└──────────┘
+```
+
+## DataFrame.vstack returns a new frame unless in_place=True
+
+Applies to: `DataFrame.vstack`
+
+`DataFrame.vstack` defaults to `in_place=False`. Calling `df1.vstack(df2)` without assigning the result leaves `df1` unchanged, and the stacked rows are silently lost. Either assign the return value or pass `in_place=True`.
+
+```python
+import polars as pl
+
+df1 = pl.DataFrame({"foo": [1, 2], "ham": ["a", "b"]})
+df2 = pl.DataFrame({"foo": [3, 4], "ham": ["c", "d"]})
+
+df1.vstack(df2)  # result discarded
+print(df1.height)  # still 2
+
+out = df1.vstack(df2)
+print(out.height)  # 4
+
+df1.vstack(df2, in_place=True)
+print(df1.height)  # 4
+```
+
+Output:
+
+```text
+2
+4
+4
+```
+
+## DataFrame.unstack ordering depends on how, and step does not mean the same thing in each direction
+
+Applies to: `DataFrame.unstack`
+
+With the default `how="vertical"`, `DataFrame.unstack` fills each new column top to bottom, and `step` is the number of rows in the result. With `how="horizontal"` the values are laid out across the columns instead. In the docstring example, 8 rows with `step=2` produce 4 rows of `x_0`/`x_1`. Using the wrong direction silently assigns values to the wrong cells, so check the output shape and order. If you need grouping by keys, use `DataFrame.pivot` instead.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"x": ["A", "B", "C", "D", "E", "F"]})
+
+v = df.unstack(step=3, how="vertical")
+print(v.shape)
+print(v)
+
+h = df.unstack(step=3, how="horizontal")
+print(h.shape)
+print(h)
+```
+
+Output:
+
+```text
+(3, 2)
+shape: (3, 2)
+┌─────┬─────┐
+│ x_0 ┆ x_1 │
+│ --- ┆ --- │
+│ str ┆ str │
+╞═════╪═════╡
+│ A   ┆ D   │
+│ B   ┆ E   │
+│ C   ┆ F   │
+└─────┴─────┘
+(2, 3)
+shape: (2, 3)
+┌─────┬─────┬─────┐
+│ x_0 ┆ x_1 ┆ x_2 │
+│ --- ┆ --- ┆ --- │
+│ str ┆ str ┆ str │
+╞═════╪═════╪═════╡
+│ A   ┆ B   ┆ C   │
+│ D   ┆ E   ┆ F   │
+└─────┴─────┴─────┘
+```
+
+## Do not pass the deprecated retries argument to DataFrame writers
+
+Applies to: `DataFrame.write_csv`, `DataFrame.write_parquet`, `DataFrame.write_ipc`
+
+The `retries` parameter of `DataFrame.write_csv`, `DataFrame.write_parquet` and `DataFrame.write_ipc` is deprecated since 1.37.1. Omit it from new code. Note also that `DataFrame.write_csv` returns the CSV as a string when `file` is `None`, while `DataFrame.write_parquet` requires a target such as a path or a binary buffer.
+
+```python
+import io
+import polars as pl
+
+df = pl.DataFrame({"foo": [1, 2], "bar": ["a", "b"]})
+
+# No retries argument
+buf = io.BytesIO()
+df.write_parquet(buf)
+buf.seek(0)
+print(pl.read_parquet(buf).equals(df))
+
+print(repr(df.write_csv()))
+```
+
+Output:
+
+```text
+True
+'foo,bar\n1,a\n2,b\n'
 ```
 
 ## DataFrame.remove keeps rows whose predicate is null, so it is not the mirror of filter

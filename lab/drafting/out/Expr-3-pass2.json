@@ -1,0 +1,56 @@
+{
+ "chunk": "Expr-3-pass2",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Expr.mode can return several rows and its order is not guaranteed",
+   "applies_to": [
+    "Expr.mode"
+   ],
+   "trap": "Unlike a scalar aggregation, `Expr.mode` returns *every* value tied for most frequent, so the result can have more than one row. Inside `DataFrame.group_by` it produces a list, not a scalar. With the default `maintain_order=False`, the order of the tied values is not defined, so `mode().first()` can pick a different value from run to run. Sort the result first, or pass `maintain_order=True`, before reducing it to one value.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"a\", \"a\"], \"x\": [1, 1, 2, 2]})\n\n# Two values tie, so mode returns two rows\nmodes = df.select(pl.col(\"x\").mode().sort())\nprint(modes)\nprint(modes.height)\n\n# Deterministic single value per group: sort before taking first\nprint(df.group_by(\"g\").agg(pl.col(\"x\").mode().sort().first()))\n",
+   "output": "shape: (2, 1)\n┌─────┐\n│ x   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 1   │\n│ 2   │\n└─────┘\n2\nshape: (1, 2)\n┌─────┬─────┐\n│ g   ┆ x   │\n│ --- ┆ --- │\n│ str ┆ i64 │\n╞═════╪═════╡\n│ a   ┆ 1   │\n└─────┴─────┘"
+  },
+  {
+   "title": "Expr.shift ignores groups unless you add .over",
+   "applies_to": [
+    "Expr.shift",
+    "Expr.over"
+   ],
+   "trap": "pandas users expect a lag to restart in each group. `Expr.shift` works on the whole column, so values leak from the previous group into the first row of the next one. Wrap it as `pl.col(...).shift().over(\"group\")` to get a per-group LAG.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\", \"b\"], \"v\": [1, 2, 10, 20]})\nout = df.with_columns(\n    wrong=pl.col(\"v\").shift(),\n    right=pl.col(\"v\").shift().over(\"g\"),\n)\n# 'wrong' row 3 holds 2 from group a; 'right' is null there\nprint(out)\n",
+   "output": "shape: (4, 4)\n┌─────┬─────┬───────┬───────┐\n│ g   ┆ v   ┆ wrong ┆ right │\n│ --- ┆ --- ┆ ---   ┆ ---   │\n│ str ┆ i64 ┆ i64   ┆ i64   │\n╞═════╪═════╪═══════╪═══════╡\n│ a   ┆ 1   ┆ null  ┆ null  │\n│ a   ┆ 2   ┆ 1     ┆ 1     │\n│ b   ┆ 10  ┆ 2     ┆ null  │\n│ b   ┆ 20  ┆ 10    ┆ 10    │\n└─────┴─────┴───────┴───────┘"
+  },
+  {
+   "title": "Order-dependent window expressions follow frame order unless order_by is given",
+   "applies_to": [
+    "Expr.over",
+    "Expr.cum_sum"
+   ],
+   "trap": "In `Expr.over`, order-dependent expressions such as `Expr.cum_sum` run in the current row order of the frame, not in time order. SQL users expect an ORDER BY inside the window. On unsorted data the running totals are silently wrong. Pass `order_by=` to `Expr.over`; the results still map back to the original row positions.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"a\"], \"t\": [3, 1, 2], \"v\": [30, 10, 20]})\nout = df.with_columns(\n    frame_order=pl.col(\"v\").cum_sum().over(\"g\"),\n    by_time=pl.col(\"v\").cum_sum().over(\"g\", order_by=\"t\"),\n)\n# by_time: t=1 -> 10, t=2 -> 30, t=3 -> 60\nprint(out)\n",
+   "output": "shape: (3, 5)\n┌─────┬─────┬─────┬─────────────┬─────────┐\n│ g   ┆ t   ┆ v   ┆ frame_order ┆ by_time │\n│ --- ┆ --- ┆ --- ┆ ---         ┆ ---     │\n│ str ┆ i64 ┆ i64 ┆ i64         ┆ i64     │\n╞═════╪═════╪═════╪═════════════╪═════════╡\n│ a   ┆ 3   ┆ 30  ┆ 30          ┆ 60      │\n│ a   ┆ 1   ┆ 10  ┆ 40          ┆ 10      │\n│ a   ┆ 2   ┆ 20  ┆ 60          ┆ 30      │\n└─────┴─────┴─────┴─────────────┴─────────┘"
+  },
+  {
+   "title": "Expr.set_sorted on unsorted data can give wrong answers",
+   "applies_to": [
+    "Expr.set_sorted"
+   ],
+   "trap": "`Expr.set_sorted` does not sort anything and does not check the data. It only sets a flag that lets later operations such as `Expr.max` take sorted fast paths. If the data is not actually sorted, those operations can silently return incorrect results. Use `Expr.sort` when you need sorted data, and use `Expr.set_sorted` only when you know the order is already correct.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [3, 1, 2]})\nout = df.select(\n    flagged=pl.col(\"v\").set_sorted().max(),\n    honest=pl.col(\"v\").max(),\n    sorted_then_flag=pl.col(\"v\").sort().set_sorted().max(),\n)\n# 'flagged' may not equal the true max of 3\nprint(out)\n",
+   "output": "shape: (1, 3)\n┌─────────┬────────┬──────────────────┐\n│ flagged ┆ honest ┆ sorted_then_flag │\n│ ---     ┆ ---    ┆ ---              │\n│ i64     ┆ i64    ┆ i64              │\n╞═════════╪════════╪══════════════════╡\n│ 2       ┆ 3      ┆ 3                │\n└─────────┴────────┴──────────────────┘"
+  },
+  {
+   "title": "Expr.shuffle shuffles one column independently and breaks rows",
+   "applies_to": [
+    "Expr.shuffle",
+    "DataFrame.sample"
+   ],
+   "trap": "`Expr.shuffle` reorders only the expression it is applied to. Using it inside `DataFrame.with_columns` scrambles the pairing between that column and the others, which silently corrupts records. To shuffle whole rows, use `DataFrame.sample(fraction=1.0, shuffle=True, seed=...)`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"id\": [1, 2, 3], \"name\": [\"x\", \"y\", \"z\"]})\n\n# Wrong: ids no longer match their names\nprint(df.with_columns(pl.col(\"id\").shuffle(seed=1)))\n\n# Right: rows stay intact, only their order changes\nprint(df.sample(fraction=1.0, shuffle=True, seed=1))\n",
+   "output": "shape: (3, 2)\n┌─────┬──────┐\n│ id  ┆ name │\n│ --- ┆ ---  │\n│ i64 ┆ str  │\n╞═════╪══════╡\n│ 2   ┆ x    │\n│ 3   ┆ y    │\n│ 1   ┆ z    │\n└─────┴──────┘\nshape: (3, 2)\n┌─────┬──────┐\n│ id  ┆ name │\n│ --- ┆ ---  │\n│ i64 ┆ str  │\n╞═════╪══════╡\n│ 2   ┆ y    │\n│ 3   ┆ z    │\n│ 1   ┆ x    │\n└─────┴──────┘"
+  }
+ ],
+ "failed": []
+}

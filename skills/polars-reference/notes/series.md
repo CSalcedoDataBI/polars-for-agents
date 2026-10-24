@@ -4,6 +4,107 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
+## backward_fill does not fill NaN, only null
+
+Applies to: `Series.backward_fill`
+
+In pandas, `bfill` treats NaN as missing. In Polars, `Series.backward_fill` (an alias of `fill_null(strategy="backward")`) fills only nulls, and NaN counts as a valid float value. A null that comes just before a NaN gets filled *with* the NaN, and the NaN itself stays. Convert NaN to null first with `Series.fill_nan(None)`, then call `Series.backward_fill`.
+
+```python
+import polars as pl
+
+s = pl.Series("x", [None, float("nan"), 1.0])
+
+# pandas habit: NaN is treated as missing (it is not in Polars)
+print(s.backward_fill().to_list())
+
+# Right: turn NaN into null, then fill
+print(s.fill_nan(None).backward_fill().to_list())
+```
+
+Output:
+
+```text
+[nan, nan, 1.0]
+[1.0, 1.0, 1.0]
+```
+
+## cum_sum and cum_prod upcast only small integer dtypes
+
+Applies to: `Series.cum_sum`, `Series.cum_prod`
+
+`Series.cum_sum` and `Series.cum_prod` cast Int8, UInt8, Int16 and UInt16 to Int64 before accumulating. So the result dtype differs from the input dtype. Other integer dtypes such as Int32 are not listed for this upcast and keep their own dtype. Do not assume the output dtype matches the input. If you need a fixed dtype, or headroom for large products, `Series.cast` explicitly first.
+
+```python
+import polars as pl
+
+s8 = pl.Series("a", [1, 2, 3], dtype=pl.Int8)
+s32 = pl.Series("b", [1, 2, 3], dtype=pl.Int32)
+
+print(s8.cum_sum().dtype)   # upcast to Int64
+print(s32.cum_sum().dtype)  # not upcast
+
+# Right: choose the accumulation dtype explicitly
+print(s32.cast(pl.Int64).cum_prod().dtype)
+```
+
+Output:
+
+```text
+Int64
+Int32
+Int64
+```
+
+## clip leaves nulls as null and None bounds mean unbounded
+
+Applies to: `Series.clip`
+
+`Series.clip` does not touch nulls: a null stays null in the output and is not clamped to a bound. Passing `None` as a bound means "no bound on that side", not a null bound. The method only works for numeric and temporal data. For other dtypes, write a `pl.when` expression instead. If nulls should become a bound value, chain `Series.fill_null` explicitly.
+
+```python
+import polars as pl
+
+s = pl.Series("v", [-50, 5, 50, None])
+
+print(s.clip(1, 10).to_list())                # null survives
+print(s.clip(upper_bound=10).to_list())       # no lower bound applied
+print(s.clip(1, 10).fill_null(1).to_list())   # fill explicitly if wanted
+```
+
+Output:
+
+```text
+[1, 5, 10, None]
+[-50, 5, 10, None]
+[1, 5, 10, 1]
+```
+
+## cumulative_eval is unstable, O(n^2), and uses min_samples not min_periods
+
+Applies to: `Series.cumulative_eval`
+
+`Series.cumulative_eval` is marked unstable, so its behaviour may change without a breaking-change notice. It re-evaluates the expression over an ever-growing window, which can cost `O(n^2)`. For plain running aggregates, prefer `Series.cum_sum`, `Series.cum_max` and similar. Since 1.21.0 the threshold parameter is `min_samples`; the old pandas-style `min_periods` name was renamed. Windows with fewer valid values than `min_samples` produce null.
+
+```python
+import polars as pl
+
+s = pl.Series("values", [1, 2, 3, 4, 5])
+
+# Expensive general form; early windows are null below min_samples
+print(s.cumulative_eval(pl.element().sum(), min_samples=3).to_list())
+
+# Right for simple running sums: the dedicated cumulative method
+print(s.cum_sum().to_list())
+```
+
+Output:
+
+```text
+[None, None, 6, 10, 15]
+[1, 3, 6, 10, 15]
+```
+
 ## Series.append mutates the Series in place
 
 Applies to: `Series.append`
@@ -237,6 +338,148 @@ strict overflow cast raised
 [1, 44]
 ```
 
+## Series.explode turns empty lists into nulls by default
+
+Applies to: `Series.explode`
+
+`Series.explode` defaults to `empty_as_null=True` and `keep_nulls=True`. An empty list therefore produces a `null` row instead of disappearing, and a `null` list also produces a `null` row. Counts and lengths taken after exploding include these extra nulls. Pass `empty_as_null=False` to drop empty lists. Pass `keep_nulls=False` to drop null lists.
+
+```python
+import polars as pl
+
+s = pl.Series("a", [[1, 2], [], None])
+print(s.explode().to_list())
+print(s.explode(empty_as_null=False).to_list())
+print(s.explode(empty_as_null=False, keep_nulls=False).to_list())
+```
+
+Output:
+
+```text
+[1, 2, None, None]
+[1, 2, None]
+[1, 2]
+```
+
+## Series.first and Series.last return None when the edge value is null
+
+Applies to: `Series.first`, `Series.last`
+
+`Series.first` and `Series.last` default to `ignore_nulls=False`. They return the literal first or last element, so a leading or trailing null gives `None` even when the Series has real values. If you want the first or last non-null value, pass `ignore_nulls=True`.
+
+```python
+import polars as pl
+
+s = pl.Series("a", [None, 2, 3, None])
+print(s.first(), s.last())
+print(s.first(ignore_nulls=True), s.last(ignore_nulls=True))
+```
+
+Output:
+
+```text
+None None
+2 3
+```
+
+## Series.kurtosis is biased Fisher kurtosis by default
+
+Applies to: `Series.kurtosis`
+
+`Series.kurtosis` defaults to `fisher=True, bias=True`. It returns excess kurtosis (normal distribution gives 0.0) computed from biased moment estimators. Code ported from tools that report a bias-corrected sample kurtosis will silently get different numbers. Pass `bias=False` for the bias-corrected estimate. Pass `fisher=False` for Pearson kurtosis (normal distribution gives 3.0).
+
+```python
+import polars as pl
+
+s = pl.Series("grades", [66, 79, 54, 97, 96, 70, 69, 85, 93, 75])
+print(s.kurtosis())
+print(s.kurtosis(bias=False))
+print(s.kurtosis(fisher=False))
+```
+
+Output:
+
+```text
+-1.0522623626787952
+-0.8959638197357283
+1.9477376373212048
+```
+
+## Series.is_close has no absolute tolerance by default, so comparisons with 0 fail
+
+Applies to: `Series.is_close`
+
+`Series.is_close` mirrors Python's `math.isclose`, not `numpy.isclose`. The defaults are `rel_tol=1e-09` and `abs_tol=0.0`. With these defaults, a tiny value such as 1e-12 is never close to 0.0, because the relative tolerance scales with the operands. Set `abs_tol` explicitly when comparing near zero. Also, NaN is not close to NaN unless you pass `nans_equal=True`.
+
+```python
+import polars as pl
+
+s = pl.Series("s", [1e-12, float("nan")])
+print(s.is_close(0.0).to_list())
+print(s.is_close(0.0, abs_tol=1e-9).to_list())
+n = pl.Series("n", [float("nan")])
+print(n.is_close(float("nan")).to_list())
+print(n.is_close(float("nan"), nans_equal=True).to_list())
+```
+
+Output:
+
+```text
+[False, False]
+[True, False]
+[False]
+[True]
+```
+
+## Use min_samples, not min_periods, in Series.ewm_mean, Series.ewm_std and Series.ewm_var
+
+Applies to: `Series.ewm_mean`, `Series.ewm_std`, `Series.ewm_var`
+
+Since 1.21.0 the warm-up parameter of the EWM methods is `min_samples`; the old `min_periods` name was renamed. Write `min_samples` in new code. Positions with fewer observations than `min_samples` are null. `adjust=True` is the default and uses decaying weights. `adjust=False` uses the recursive formula and gives different early values, so choose it deliberately.
+
+```python
+import polars as pl
+
+s = pl.Series("x", [1.0, 2.0, 3.0])
+print(s.ewm_mean(alpha=0.5, min_samples=2).to_list())
+print(s.ewm_mean(alpha=0.5).to_list())
+print(s.ewm_mean(alpha=0.5, adjust=False).to_list())
+```
+
+Output:
+
+```text
+[None, 1.6666666666666665, 2.4285714285714284]
+[1.0, 1.6666666666666665, 2.4285714285714284]
+[1.0, 1.5, 2.25]
+```
+
+## Do not persist Series.hash values: they are only stable within one Polars version
+
+Applies to: `Series.hash`
+
+`Series.hash` is deterministic for a given seed only within a single Polars version. The docstring explicitly does not guarantee stable results across versions. Do not store these hashes as keys in files or databases, or compare them with hashes computed by another Polars install. Use them only for in-process work such as bucketing or deduplication. Different seeds also give different hashes, so keep the seed fixed when comparing.
+
+```python
+import polars as pl
+
+s = pl.Series("a", [1, 2, 3])
+h1 = s.hash(seed=0)
+h2 = s.hash(seed=0)
+h3 = s.hash(seed=1)
+print(h1.dtype)
+print(h1.to_list() == h2.to_list())
+print(h1.to_list() == h3.to_list())
+```
+
+Output:
+
+```text
+UInt64
+True
+False
+```
+
 ## Series.count counts NaN as a valid value; only nulls are excluded
 
 Applies to: `Series.count`, `Series.len`, `Series.fill_nan`
@@ -437,6 +680,171 @@ Output:
 ['statistic', 'value']
 nearest: [('25%', 2.0), ('50%', 3.0), ('75%', 3.0)]
 linear: [('25%', 1.75), ('50%', 2.5), ('75%', 3.25)]
+```
+
+## pct_change returns a fraction and gives inf after a zero, not null
+
+Applies to: `Series.pct_change`
+
+`Series.pct_change` returns the change as a fraction (0.5 means +50%), not a percentage, so multiply by 100 yourself if you need percent. When the earlier value is 0, the result is `inf`, not null or an error, and that `inf` silently poisons later means and sums. Guard zero denominators explicitly, for example with `pl.when` on the shifted value, before you aggregate.
+
+```python
+import polars as pl
+
+s = pl.Series("price", [0.0, 2.0, 3.0, 3.0])
+print(s.pct_change().to_list())
+print(s.pct_change().mean())
+
+safe = s.to_frame().select(
+    pl.when(pl.col("price").shift() == 0)
+    .then(None)
+    .otherwise(pl.col("price").pct_change() * 100)
+    .alias("pct")
+)
+print(safe["pct"].to_list())
+print(safe["pct"].mean())
+```
+
+Output:
+
+```text
+[None, inf, 0.5, 0.0]
+inf
+[None, None, 50.0, 0.0]
+25.0
+```
+
+## Integer pow keeps the integer dtype; use a float exponent for roots and negative powers
+
+Applies to: `Series.pow`
+
+`Series.pow` follows the dtype of the base unless the exponent is a float. An integer Series raised to an integer exponent stays integer. To raise integers to a negative power, the docstring says to cast the base or the exponent to float, for example pass `-1.0` instead of `-1`. A float exponent makes the result follow the exponent's float dtype.
+
+```python
+import polars as pl
+
+s = pl.Series("x", [1, 2, 3, 4])
+sq = s.pow(2)
+print(sq.dtype, sq.to_list())
+
+root = s.pow(0.5)
+print(root.dtype, root.to_list())
+
+inv = s.pow(-1.0)
+print(inv.dtype, inv.to_list())
+```
+
+Output:
+
+```text
+Int64 [1, 4, 9, 16]
+Float64 [1.0, 1.4142135623730951, 1.7320508075688772, 2.0]
+Float64 [1.0, 0.5, 0.3333333333333333, 0.25]
+```
+
+## Rolling skew, kurtosis and map default min_samples to the full window
+
+Applies to: `Series.rolling_map`, `Series.rolling_skew`, `Series.rolling_kurtosis`
+
+For `Series.rolling_map`, `Series.rolling_skew` and `Series.rolling_kurtosis`, `min_samples=None` means `min_samples = window_size`. The first `window_size - 1` results are therefore null. Pass `min_samples` explicitly if you want partial windows. In `Series.rolling_map` the old `min_periods` parameter was renamed to `min_samples` in 1.21.0, so use the new name. These three methods are also marked unstable.
+
+```python
+import polars as pl
+
+s = pl.Series("v", [1.0, 2.0, 3.0, 4.0])
+print(s.rolling_map(lambda w: w.sum(), window_size=3).to_list())
+print(s.rolling_map(lambda w: w.sum(), window_size=3, min_samples=1).to_list())
+```
+
+Output:
+
+```text
+[None, None, 6.0, 9.0]
+[1.0, 3.0, 6.0, 9.0]
+```
+
+## Series.std defaults to the sample standard deviation (ddof=1), unlike NumPy
+
+Applies to: `Series.std`
+
+`Series.std` divides by N - 1 by default (`ddof=1`). This matches pandas, but code ported from NumPy (`np.std` uses ddof=0) will get different numbers. Pass `ddof=0` when you need the population standard deviation.
+
+```python
+import polars as pl
+
+s = pl.Series("a", [1, 2, 3])
+print(s.std())
+print(s.std(ddof=0))
+```
+
+Output:
+
+```text
+1.0
+0.816496580927726
+```
+
+## rle_id numbers runs of consecutive values, not distinct values
+
+Applies to: `Series.rle_id`, `Series.rle`
+
+`Series.rle_id` starts a new ID every time the value changes. A value that reappears later gets a new ID, so it is not a distinct-value ID or a categorical code. A null also forms its own run. `Series.rle` likewise returns one row per run, not one row per unique value. Use these methods to group consecutive streaks; to count distinct values, use `Series.n_unique` or `Series.value_counts`.
+
+```python
+import polars as pl
+
+s = pl.Series("state", ["a", "a", "b", "a", None, "a"])
+print(s.rle_id().to_list())
+print(s.rle_id().max() + 1, s.n_unique())
+print(s.rle().struct.unnest())
+```
+
+Output:
+
+```text
+[0, 0, 1, 2, 3, 4]
+5 3
+shape: (5, 2)
+┌─────┬───────┐
+│ len ┆ value │
+│ --- ┆ ---   │
+│ u32 ┆ str   │
+╞═════╪═══════╡
+│ 2   ┆ a     │
+│ 1   ┆ b     │
+│ 1   ┆ a     │
+│ 1   ┆ null  │
+│ 1   ┆ a     │
+└─────┴───────┘
+```
+
+## Series.set takes a boolean mask, Series.scatter takes positions; both are anti-patterns
+
+Applies to: `Series.set`, `Series.scatter`
+
+pandas users reach for `.loc` or `.iloc` style assignment. In Polars, `Series.set` expects a boolean mask the same length as the Series, while `Series.scatter` expects integer index positions; mixing them up gives wrong rows or an error. The docstrings call both an anti-pattern that can block optimization such as predicate pushdown. Prefer `pl.when(predicate).then(value).otherwise(...)` inside `DataFrame.select` or `DataFrame.with_columns`.
+
+```python
+import polars as pl
+
+s1 = pl.Series("a", [1, 2, 3])
+print(s1.set(s1 == 2, 10).to_list())
+
+s2 = pl.Series("a", [1, 2, 3])
+print(s2.scatter([0], [99]).to_list())
+
+out = pl.Series("a", [1, 2, 3]).to_frame().select(
+    pl.when(pl.col("a") == 2).then(10).otherwise(pl.col("a")).alias("a")
+)
+print(out["a"].to_list())
+```
+
+Output:
+
+```text
+[1, 10, 3]
+[99, 2, 3]
+[1, 10, 3]
 ```
 
 ## is_duplicated flags every copy, not just the repeats after the first
@@ -674,6 +1082,58 @@ False
 True
 True
 1
+```
+
+## Series.to_dummies adds a null indicator column unless drop_nulls=True
+
+Applies to: `Series.to_dummies`
+
+If the Series contains nulls, `Series.to_dummies` creates an extra indicator column for the null values by default. A model matrix built this way gets an unexpected feature column. Pass `drop_nulls=True` to skip that column, so null rows become all-zero vectors. `drop_first=True` drops the first category, not the null column. The indicator columns are `UInt8`, not boolean.
+
+```python
+import polars as pl
+
+s = pl.Series("a", [1, 2, None, 3])
+
+default = s.to_dummies()
+print(default.columns)
+
+clean = s.to_dummies(drop_nulls=True)
+print(clean.columns)
+print(clean.dtypes)
+print(clean.row(2))
+```
+
+Output:
+
+```text
+['a_1', 'a_2', 'a_3', 'a_null']
+['a_1', 'a_2', 'a_3']
+[UInt8, UInt8, UInt8]
+(0, 0, 0)
+```
+
+## Series.upper_bound returns the dtype's limit, not the data maximum
+
+Applies to: `Series.upper_bound`
+
+`Series.upper_bound` ignores the values in the Series. It returns the largest value representable by the Series' dtype as a one-element Series. For example, it gives 127 for `Int8` and `inf` for `Float64`, not the largest finite float. Use `Series.max` for the largest value actually present. When you use `Series.upper_bound` as a sentinel, remember that it is infinite for float dtypes.
+
+```python
+import polars as pl
+
+s_int = pl.Series("s", [-1, 0, 1], dtype=pl.Int8)
+print(s_int.max(), s_int.upper_bound().item())
+
+s_float = pl.Series("s", [1.0, 2.5, 3.0], dtype=pl.Float64)
+print(s_float.max(), s_float.upper_bound().item())
+```
+
+Output:
+
+```text
+1 127
+3.0 inf
 ```
 
 ## Use ne_missing when nulls must compare as values; ne, lt and le return null for null inputs

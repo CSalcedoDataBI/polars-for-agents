@@ -1,0 +1,55 @@
+{
+ "chunk": "DataFrame-3-pass2",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Pass include_header=True to DataFrame.transpose or the column names are lost",
+   "applies_to": [
+    "DataFrame.transpose"
+   ],
+   "trap": "By default `DataFrame.transpose` uses `include_header=False`. The original column names are discarded and the new columns get auto-generated names `column_0`, `column_1`, and so on. There is no index to carry the labels as there is in pandas. Pass `include_header=True` (and optionally `header_name=`) to keep the old names as a column, and use `column_names=` to name the value columns.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\n\n# Default: the names 'a' and 'b' are gone\nprint(df.transpose())\n\n# Keep the names as a column and name the value columns\nprint(df.transpose(include_header=True, header_name=\"field\", column_names=[\"r0\", \"r1\"]))\n",
+   "output": "shape: (2, 2)\n┌──────────┬──────────┐\n│ column_0 ┆ column_1 │\n│ ---      ┆ ---      │\n│ i64      ┆ i64      │\n╞══════════╪══════════╡\n│ 1        ┆ 2        │\n│ 3        ┆ 4        │\n└──────────┴──────────┘\nshape: (2, 3)\n┌───────┬─────┬─────┐\n│ field ┆ r0  ┆ r1  │\n│ ---   ┆ --- ┆ --- │\n│ str   ┆ i64 ┆ i64 │\n╞═══════╪═════╪═════╡\n│ a     ┆ 1   ┆ 2   │\n│ b     ┆ 3   ┆ 4   │\n└───────┴─────┴─────┘"
+  },
+  {
+   "title": "DataFrame.var keeps non-numeric columns as null and uses ddof=1",
+   "applies_to": [
+    "DataFrame.var"
+   ],
+   "trap": "`DataFrame.var` does not drop non-numeric columns the way pandas `numeric_only=True` would. String columns stay in the result with a `null` value. It also computes the sample variance (`ddof=1`), not numpy's population default (`ddof=0`). Select numeric columns first (for example with `cs.numeric`) and pass `ddof=0` explicitly if you need the population variance.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"x\": [1, 2, 3], \"s\": [\"a\", \"b\", \"c\"]})\n\n# String column 's' is kept as null; x uses ddof=1 -> 1.0\nprint(df.var())\n\n# Numeric columns only, population variance -> 0.666667\nprint(df.select(cs.numeric()).var(ddof=0))\n",
+   "output": "shape: (1, 2)\n┌─────┬──────┐\n│ x   ┆ s    │\n│ --- ┆ ---  │\n│ f64 ┆ str  │\n╞═════╪══════╡\n│ 1.0 ┆ null │\n└─────┴──────┘\nshape: (1, 1)\n┌──────────┐\n│ x        │\n│ ---      │\n│ f64      │\n╞══════════╡\n│ 0.666667 │\n└──────────┘"
+  },
+  {
+   "title": "DataFrame.vstack returns a new frame unless in_place=True",
+   "applies_to": [
+    "DataFrame.vstack"
+   ],
+   "trap": "`DataFrame.vstack` defaults to `in_place=False`. Calling `df1.vstack(df2)` without assigning the result leaves `df1` unchanged, and the stacked rows are silently lost. Either assign the return value or pass `in_place=True`.",
+   "example": "import polars as pl\n\ndf1 = pl.DataFrame({\"foo\": [1, 2], \"ham\": [\"a\", \"b\"]})\ndf2 = pl.DataFrame({\"foo\": [3, 4], \"ham\": [\"c\", \"d\"]})\n\ndf1.vstack(df2)  # result discarded\nprint(df1.height)  # still 2\n\nout = df1.vstack(df2)\nprint(out.height)  # 4\n\ndf1.vstack(df2, in_place=True)\nprint(df1.height)  # 4\n",
+   "output": "2\n4\n4"
+  },
+  {
+   "title": "DataFrame.unstack ordering depends on how, and step does not mean the same thing in each direction",
+   "applies_to": [
+    "DataFrame.unstack"
+   ],
+   "trap": "With the default `how=\"vertical\"`, `DataFrame.unstack` fills each new column top to bottom, and `step` is the number of rows in the result. With `how=\"horizontal\"` the values are laid out across the columns instead. In the docstring example, 8 rows with `step=2` produce 4 rows of `x_0`/`x_1`. Using the wrong direction silently assigns values to the wrong cells, so check the output shape and order. If you need grouping by keys, use `DataFrame.pivot` instead.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [\"A\", \"B\", \"C\", \"D\", \"E\", \"F\"]})\n\nv = df.unstack(step=3, how=\"vertical\")\nprint(v.shape)\nprint(v)\n\nh = df.unstack(step=3, how=\"horizontal\")\nprint(h.shape)\nprint(h)\n",
+   "output": "(3, 2)\nshape: (3, 2)\n┌─────┬─────┐\n│ x_0 ┆ x_1 │\n│ --- ┆ --- │\n│ str ┆ str │\n╞═════╪═════╡\n│ A   ┆ D   │\n│ B   ┆ E   │\n│ C   ┆ F   │\n└─────┴─────┘\n(2, 3)\nshape: (2, 3)\n┌─────┬─────┬─────┐\n│ x_0 ┆ x_1 ┆ x_2 │\n│ --- ┆ --- ┆ --- │\n│ str ┆ str ┆ str │\n╞═════╪═════╪═════╡\n│ A   ┆ B   ┆ C   │\n│ D   ┆ E   ┆ F   │\n└─────┴─────┴─────┘"
+  },
+  {
+   "title": "Do not pass the deprecated retries argument to DataFrame writers",
+   "applies_to": [
+    "DataFrame.write_csv",
+    "DataFrame.write_parquet",
+    "DataFrame.write_ipc"
+   ],
+   "trap": "The `retries` parameter of `DataFrame.write_csv`, `DataFrame.write_parquet` and `DataFrame.write_ipc` is deprecated since 1.37.1. Omit it from new code. Note also that `DataFrame.write_csv` returns the CSV as a string when `file` is `None`, while `DataFrame.write_parquet` requires a target such as a path or a binary buffer.",
+   "example": "import io\nimport polars as pl\n\ndf = pl.DataFrame({\"foo\": [1, 2], \"bar\": [\"a\", \"b\"]})\n\n# No retries argument\nbuf = io.BytesIO()\ndf.write_parquet(buf)\nbuf.seek(0)\nprint(pl.read_parquet(buf).equals(df))\n\nprint(repr(df.write_csv()))\n",
+   "output": "True\n'foo,bar\\n1,a\\n2,b\\n'"
+  }
+ ],
+ "failed": []
+}

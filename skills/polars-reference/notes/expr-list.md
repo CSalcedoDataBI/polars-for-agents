@@ -421,3 +421,78 @@ ComputeError
 Schema({'a': Array(Int64, shape=(2,))})
 [([1, 2],), ([3, 4],)]
 ```
+
+## Expr.list.slice takes a length, not an end index
+
+Applies to: `Expr.list.slice`
+
+Python and pandas slicing habits read `slice(1, 3)` as elements 1 up to 3. In `Expr.list.slice` the second argument is `length`, the number of elements to take starting at `offset`. Writing `slice(start, stop)` silently returns `stop` elements instead of `stop - start`, with no error. Pass `length=stop - start`, or omit `length` to slice to the end of each list.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [[10, 20, 30, 40, 50], [1, 2, 3, 4]]})
+start, stop = 1, 3
+out = df.select(
+    python_habit=pl.col("a").list.slice(start, stop),
+    correct=pl.col("a").list.slice(start, stop - start),
+    to_end=pl.col("a").list.slice(start),
+)
+print(out.to_dicts())
+```
+
+Output:
+
+```text
+[{'python_habit': [20, 30, 40], 'correct': [20, 30], 'to_end': [20, 30, 40, 50]}, {'python_habit': [2, 3, 4], 'correct': [2, 3], 'to_end': [2, 3, 4]}]
+```
+
+## Expr.list.diff and Expr.list.shift restart in every sublist and leave nulls
+
+Applies to: `Expr.list.diff`, `Expr.list.shift`
+
+`Expr.list.diff` and `Expr.list.shift` work inside each sublist independently. Nothing carries over from the previous row, so the first `n` slots of every list become null. With the default `null_behavior='ignore'`, `Expr.list.diff` keeps those nulls, and the output list has the same length as the input. Pass `null_behavior='drop'` to drop the leading nulls, which makes each list shorter by `n`. If you want differences across rows, use `Expr.diff` on a non-list column instead.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [[1, 2, 4], [10, 7]]})
+out = df.select(
+    diff_default=pl.col("a").list.diff(),
+    diff_drop=pl.col("a").list.diff(null_behavior="drop"),
+    shifted=pl.col("a").list.shift(),
+    lead=pl.col("a").list.shift(-1),
+)
+print(out.to_dicts())
+```
+
+Output:
+
+```text
+[{'diff_default': [None, 1, 2], 'diff_drop': [1, 2], 'shifted': [None, 1, 2], 'lead': [2, 4, None]}, {'diff_default': [None, -3], 'diff_drop': [-3], 'shifted': [None, 10], 'lead': [7, None]}]
+```
+
+## Expr.list.sample returns one element by default and is unseeded
+
+Applies to: `Expr.list.sample`
+
+When neither `n` nor `fraction` is given, `Expr.list.sample` defaults to `n=1`. It does not return a reordered copy of the whole list, so the other elements are silently lost. With `seed=None` (the default), every run draws a new random seed, so results are not reproducible. To shuffle whole lists, pass `fraction=1.0, shuffle=True`, and always set `seed` when you need deterministic output.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"v": [[1, 2, 3], [4, 5]]})
+out = df.select(
+    default_len=pl.col("v").list.sample(seed=0).list.len(),
+    full_len=pl.col("v")
+    .list.sample(fraction=1.0, shuffle=True, seed=0)
+    .list.len(),
+)
+print(out.to_dicts())
+```
+
+Output:
+
+```text
+[{'default_len': 1, 'full_len': 3}, {'default_len': 1, 'full_len': 2}]
+```

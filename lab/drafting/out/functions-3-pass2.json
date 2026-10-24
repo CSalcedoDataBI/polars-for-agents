@@ -1,0 +1,60 @@
+{
+ "chunk": "functions-3-pass2",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pl.row_index restarts at 0 inside each group",
+   "applies_to": [
+    "pl.row_index"
+   ],
+   "trap": "`pl.row_index` numbers rows within the current evaluation context. Inside `DataFrame.group_by(...).agg(...)` it restarts at 0 for each group, so it does not give the original row positions. If you need the original positions, call `DataFrame.with_row_index` before grouping and aggregate that column. The dtype is the index type (`u32` by default), not `i64`. The function is also marked unstable.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [\"A\", \"B\", \"A\", \"B\", \"B\"]})\n\n# Trap: positions are per group, not the original row numbers\nprint(df.group_by(\"x\", maintain_order=True).agg(pl.row_index()))\n\n# Right: materialise the original row index before grouping\nprint(\n    df.with_row_index(\"idx\")\n    .group_by(\"x\", maintain_order=True)\n    .agg(pl.col(\"idx\"))\n)\n\nprint(df.select(pl.row_index()).schema)",
+   "output": "shape: (2, 2)\n┌─────┬───────────┐\n│ x   ┆ index     │\n│ --- ┆ ---       │\n│ str ┆ list[u32] │\n╞═════╪═══════════╡\n│ A   ┆ [0, 1]    │\n│ B   ┆ [0, 1, 2] │\n└─────┴───────────┘\nshape: (2, 2)\n┌─────┬───────────┐\n│ x   ┆ idx       │\n│ --- ┆ ---       │\n│ str ┆ list[u32] │\n╞═════╪═══════════╡\n│ A   ┆ [0, 2]    │\n│ B   ┆ [1, 3, 4] │\n└─────┴───────────┘\nSchema({'index': UInt32})"
+  },
+  {
+   "title": "pl.time_range includes both endpoints and defaults end to the end of the day",
+   "applies_to": [
+    "pl.time_range",
+    "pl.time_ranges"
+   ],
+   "trap": "`pl.time_range` and `pl.time_ranges` default to `closed='both'`, so the `end` value is included. This differs from Python's `range` and pandas-style half-open slicing. Pass `closed='left'` for a half-open range. If you omit `end`, it defaults to `time(23,59,59,999999)`, so the range silently runs to midnight.",
+   "example": "import polars as pl\nfrom datetime import time\n\nboth = pl.time_range(time(9), time(12), \"1h\", eager=True)\nleft = pl.time_range(time(9), time(12), \"1h\", closed=\"left\", eager=True)\nno_end = pl.time_range(time(22), interval=\"1h\", eager=True)\n\nprint(both.to_list())    # includes 12:00\nprint(left.to_list())    # stops at 11:00\nprint(no_end.to_list())  # runs to the end of the day",
+   "output": "[datetime.time(9, 0), datetime.time(10, 0), datetime.time(11, 0), datetime.time(12, 0)]\n[datetime.time(9, 0), datetime.time(10, 0), datetime.time(11, 0)]\n[datetime.time(22, 0), datetime.time(23, 0)]"
+  },
+  {
+   "title": "pl.union does not preserve row order; use pl.concat when order matters",
+   "applies_to": [
+    "pl.union"
+   ],
+   "trap": "`pl.union` looks like `pl.concat` and takes the same `how` strategies. However, it explicitly does not guarantee any ordering of rows in the result. Code that assumes the rows of the first frame come first, or relies on positional alignment afterwards, can silently get wrong results. Use `pl.concat` when you need predictable order, or sort the union result explicitly.",
+   "example": "import polars as pl\n\na = pl.DataFrame({\"id\": [1, 2]})\nb = pl.DataFrame({\"id\": [3, 4]})\n\nu = pl.union([a, b])\n# Only rely on the union's content, not its order: sort explicitly\nprint(u.sort(\"id\")[\"id\"].to_list())\n\n# pl.concat guarantees a's rows followed by b's rows\nprint(pl.concat([a, b])[\"id\"].to_list())",
+   "output": "[1, 2, 3, 4]\n[1, 2, 3, 4]"
+  },
+  {
+   "title": "pl.scan_parquet raises on missing columns by default; allow_missing_columns is deprecated",
+   "applies_to": [
+    "pl.scan_parquet"
+   ],
+   "trap": "When scanning several parquet sources whose schemas differ, `pl.scan_parquet` uses `missing_columns='raise'` by default. A later file that lacks a column from the first file therefore errors. The old `allow_missing_columns=True` flag is deprecated since 1.30.0. Pass `missing_columns='insert'` instead to fill the absent columns with nulls.",
+   "example": "import io\nimport polars as pl\n\ndef pq(df):\n    buf = io.BytesIO()\n    df.write_parquet(buf)\n    return buf.getvalue()\n\nsrcs = [pq(pl.DataFrame({\"a\": [1], \"b\": [\"x\"]})), pq(pl.DataFrame({\"a\": [2]}))]\n\ntry:\n    pl.scan_parquet(srcs).collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nprint(pl.scan_parquet(srcs, missing_columns=\"insert\").collect())",
+   "output": "ColumnNotFoundError\nshape: (2, 2)\n┌─────┬──────┐\n│ a   ┆ b    │\n│ --- ┆ ---  │\n│ i64 ┆ str  │\n╞═════╪══════╡\n│ 1   ┆ x    │\n│ 2   ┆ null │\n└─────┴──────┘"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "pl.threadpool_size is deprecated; call pl.thread_pool_size",
+    "applies_to": [
+     "pl.threadpool_size",
+     "pl.thread_pool_size"
+    ],
+    "trap": "`pl.threadpool_size` was renamed in 0.20.7 and now emits a deprecation warning. Use `pl.thread_pool_size` instead. The pool size cannot be changed from Python after import. Only the `POLARS_MAX_THREADS` environment variable, set before process start, overrides it.",
+    "example": "import warnings\nimport polars as pl\n\nwith warnings.catch_warnings(record=True) as w:\n    warnings.simplefilter(\"always\")\n    old = pl.threadpool_size()\n    print(w[0].category.__name__)\n\nnew = pl.thread_pool_size()\nprint(old == new, type(new).__name__)"
+   },
+   "problems": [
+    "`.category` is not a member of any Polars class in 1.38.1"
+   ]
+  }
+ ]
+}

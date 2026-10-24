@@ -1,0 +1,54 @@
+{
+ "chunk": "selectors-pass2",
+ "group": "selectors",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "`~selector` selects the other columns; it does not negate boolean values",
+   "applies_to": [
+    "cs.boolean",
+    "cs.all"
+   ],
+   "trap": "On a selector, `~` is a set complement. `~cs.boolean()` means \"every column that is not boolean\". It does not flip true/false the way `~` does on a boolean `pl.col`. In the same way, `cs.all() - cs.numeric()` is a set difference of columns, not arithmetic. To invert the values in the boolean columns, call an expression method on the selector, such as `cs.boolean().not_()`.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"n\": [1, 2], \"flag\": [True, False]})\n\n# Set complement: picks the NON-boolean columns\nprint(df.select(~cs.boolean()).columns)\n\n# Value negation of the boolean columns\nprint(df.select(cs.boolean().not_()))\n\n# Set difference of columns, not subtraction\nprint(df.select(cs.all() - cs.numeric()).columns)",
+   "output": "['n']\nshape: (2, 1)\n┌───────┐\n│ flag  │\n│ ---   │\n│ bool  │\n╞═══════╡\n│ false │\n│ true  │\n└───────┘\n['flag']"
+  },
+  {
+   "title": "A selector that matches nothing silently returns an empty frame",
+   "applies_to": [
+    "cs.list",
+    "cs.array",
+    "cs.nested",
+    "cs.struct",
+    "cs.enum"
+   ],
+   "trap": "If no column matches a selector, `DataFrame.select` returns a `shape: (0, 0)` frame instead of raising. For example, `cs.list(cs.integer())` on a `list[str]` column, or `cs.array(width=3)` on width-2 arrays, gives an empty result. Downstream code then quietly works on nothing. These nested and enum selectors are also marked unstable. Check what matched with `cs.expand_selector` before relying on the result.",
+   "example": "import polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\"tags\": [[\"a\"], [\"b\", \"c\"]], \"n\": [1, 2]})\n\nsel = cs.list(cs.integer())  # inner type is str, so nothing matches\nprint(df.select(sel).shape)  # (0, 0), no error\n\nmatched = cs.expand_selector(df, sel)\nprint(matched)\nif not matched:\n    print(\"guard: no columns matched, falling back\")\n    sel = cs.list(cs.string())\nprint(df.select(sel).columns)",
+   "output": "(0, 0)\n()\nguard: no columns matched, falling back\n['tags']"
+  },
+  {
+   "title": "`cs.temporal` also matches time-of-day columns, not just dates",
+   "applies_to": [
+    "cs.temporal",
+    "cs.date",
+    "cs.time"
+   ],
+   "trap": "`cs.temporal` selects every temporal dtype, including `time` columns, not only date-like ones. Calendar operations applied through it, such as extracting the year, will hit `time` columns that have no date part. When you mean calendar dates, select them explicitly with `cs.date()` (combined with `cs.datetime()` if needed). Alternatively, remove times with `cs.temporal() - cs.time()`.",
+   "example": "import polars as pl\nimport polars.selectors as cs\nfrom datetime import date, time\n\ndf = pl.DataFrame({\n    \"dt\": [date(2021, 1, 1), date(2022, 6, 2)],\n    \"tm\": [time(12, 0), time(20, 30)],\n})\n\nprint(df.select(cs.temporal()).columns)  # includes 'tm'\nprint(df.select(cs.temporal() - cs.time()).columns)\nprint(df.select(cs.date().dt.year()))",
+   "output": "['dt', 'tm']\n['dt']\nshape: (2, 1)\n┌──────┐\n│ dt   │\n│ ---  │\n│ i32  │\n╞══════╡\n│ 2021 │\n│ 2022 │\n└──────┘"
+  },
+  {
+   "title": "`cs.numeric` skips boolean columns and `cs.float` skips decimals",
+   "applies_to": [
+    "cs.numeric",
+    "cs.float",
+    "cs.decimal",
+    "cs.boolean"
+   ],
+   "trap": "Boolean columns are not numeric for selectors. So `cs.numeric().sum()` silently drops flag columns that a pandas user might expect to be counted. Likewise, `cs.float` only matches Float32/Float64. Decimal columns (for example money values) need `cs.decimal`. Combine selectors explicitly, such as `cs.numeric() | cs.boolean()` or `cs.float() | cs.decimal()`, when you want those columns included.",
+   "example": "import polars as pl\nimport polars.selectors as cs\nfrom decimal import Decimal\n\ndf = pl.DataFrame({\"qty\": [1, 2], \"ok\": [True, True]})\nprint(df.select(cs.numeric()).columns)  # 'ok' missing\nprint(df.select((cs.numeric() | cs.boolean()).cast(pl.Int64).sum()))\n\nmoney = pl.DataFrame({\n    \"w\": [0.5, 1.0],\n    \"price\": [Decimal(\"1.50\"), Decimal(\"2.25\")],\n})\nprint(money.select(cs.float()).columns)  # 'price' missing\nprint(money.select(cs.float() | cs.decimal()).columns)",
+   "output": "['qty']\nshape: (1, 2)\n┌─────┬─────┐\n│ qty ┆ ok  │\n│ --- ┆ --- │\n│ i64 ┆ i64 │\n╞═════╪═════╡\n│ 3   ┆ 2   │\n└─────┴─────┘\n['w']\n['w', 'price']"
+  }
+ ],
+ "failed": []
+}

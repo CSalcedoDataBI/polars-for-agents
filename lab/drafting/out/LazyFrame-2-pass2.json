@@ -1,0 +1,66 @@
+{
+ "chunk": "LazyFrame-2-pass2",
+ "group": "LazyFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Columns created in one with_columns call cannot be referenced in that same call",
+   "applies_to": [
+    "LazyFrame.with_columns",
+    "LazyFrame.with_columns_seq"
+   ],
+   "trap": "All expressions passed to one `LazyFrame.with_columns` call are evaluated against the input frame. A column you alias in the call does not exist yet for the other expressions in that call. Code that defines `b` and then uses `pl.col(\"b\")` in the same call fails with a column-not-found error. Chain a second `LazyFrame.with_columns` call when one new column depends on another.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3]})\ntry:\n    lf.with_columns(\n        (pl.col(\"a\") * 2).alias(\"b\"),\n        (pl.col(\"b\") + 1).alias(\"c\"),\n    ).collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nout = (\n    lf.with_columns((pl.col(\"a\") * 2).alias(\"b\"))\n    .with_columns((pl.col(\"b\") + 1).alias(\"c\"))\n    .collect()\n)\nprint(out)",
+   "output": "ColumnNotFoundError\nshape: (3, 3)\n┌─────┬─────┬─────┐\n│ a   ┆ b   ┆ c   │\n│ --- ┆ --- ┆ --- │\n│ i64 ┆ i64 ┆ i64 │\n╞═════╪═════╪═════╡\n│ 1   ┆ 2   ┆ 3   │\n│ 2   ┆ 4   ┆ 5   │\n│ 3   ┆ 6   ┆ 7   │\n└─────┴─────┴─────┘"
+  },
+  {
+   "title": "set_sorted only flags a column, it does not sort it",
+   "applies_to": [
+    "LazyFrame.set_sorted"
+   ],
+   "trap": "`LazyFrame.set_sorted` does not reorder any rows. It only tells the engine to trust that the data is already sorted. If the data is not actually sorted, later operations that rely on the flag can return incorrect results. Use `LazyFrame.sort` to order the data, and use `set_sorted` only when you know the input is already sorted.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [3, 1, 2]})\n# Rows are unchanged: still 3, 1, 2, but now falsely flagged as sorted\nprint(lf.set_sorted(\"a\").collect())\n# Actually sorts the data\nprint(lf.sort(\"a\").collect())",
+   "output": "shape: (3, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 3   │\n│ 1   │\n│ 2   │\n└─────┘\nshape: (3, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 1   │\n│ 2   │\n│ 3   │\n└─────┘"
+  },
+  {
+   "title": "LazyFrame.shift shifts every column, including keys",
+   "applies_to": [
+    "LazyFrame.shift"
+   ],
+   "trap": "`LazyFrame.shift` moves all columns of the frame, so id or key columns are shifted along with the values and become null at the edges. It also ignores groups. To build a lag or lead column, use `Expr.shift` inside `LazyFrame.with_columns`. Add `Expr.over` when the shift must stay within each group.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"id\": [\"x\", \"x\", \"y\", \"y\"], \"v\": [1, 2, 3, 4]})\n# Wrong: the id column is shifted too, and values leak across groups\nprint(lf.shift().collect())\n# Right: lag only v, within each id\nout = lf.with_columns(\n    pl.col(\"v\").shift().over(\"id\").alias(\"v_prev\")\n).collect()\nprint(out)",
+   "output": "shape: (4, 2)\n┌──────┬──────┐\n│ id   ┆ v    │\n│ ---  ┆ ---  │\n│ str  ┆ i64  │\n╞══════╪══════╡\n│ null ┆ null │\n│ x    ┆ 1    │\n│ x    ┆ 2    │\n│ y    ┆ 3    │\n└──────┴──────┘\nshape: (4, 3)\n┌─────┬─────┬────────┐\n│ id  ┆ v   ┆ v_prev │\n│ --- ┆ --- ┆ ---    │\n│ str ┆ i64 ┆ i64    │\n╞═════╪═════╪════════╡\n│ x   ┆ 1   ┆ null   │\n│ x   ┆ 2   ┆ 1      │\n│ y   ┆ 3   ┆ null   │\n│ y   ┆ 4   ┆ 3      │\n└─────┴─────┴────────┘"
+  },
+  {
+   "title": "sink_* methods execute immediately and return None",
+   "applies_to": [
+    "LazyFrame.sink_csv",
+    "LazyFrame.sink_parquet",
+    "LazyFrame.sink_ipc",
+    "LazyFrame.sink_ndjson"
+   ],
+   "trap": "With the default `lazy=False`, `LazyFrame.sink_csv` and the other sinks run the query and write the output right away, then return `None`. Chaining `.collect()` onto the result raises an `AttributeError`. Call the sink as a terminal statement. Pass `lazy=True` (unstable) only if you want a `LazyFrame` back to collect later.",
+   "example": "import io\nimport polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2]})\nbuf = io.BytesIO()\ntry:\n    lf.sink_csv(buf).collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nbuf2 = io.BytesIO()\nres = lf.sink_csv(buf2)\nprint(res)\nprint(buf2.getvalue().decode())",
+   "output": "AttributeError\nNone\na\n1\n2"
+  },
+  {
+   "title": "unnest fails when struct field names collide with existing columns",
+   "applies_to": [
+    "LazyFrame.unnest"
+   ],
+   "trap": "`LazyFrame.unnest` turns each struct field into a top-level column that keeps the bare field name. If a field has the same name as an existing column, the query fails with a duplicate-column error. Pass `separator=` so the new columns are named `<struct>_<field>`, or rename the fields first.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\n    \"a\": [1, 2],\n    \"s\": [{\"a\": 10, \"b\": \"x\"}, {\"a\": 20, \"b\": \"y\"}],\n})\ntry:\n    lf.unnest(\"s\").collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nprint(lf.unnest(\"s\", separator=\"_\").collect())",
+   "output": "DuplicateError\nshape: (2, 3)\n┌─────┬─────┬─────┐\n│ a   ┆ s_a ┆ s_b │\n│ --- ┆ --- ┆ --- │\n│ i64 ┆ i64 ┆ str │\n╞═════╪═════╪═════╡\n│ 1   ┆ 10  ┆ x   │\n│ 2   ┆ 20  ┆ y   │\n└─────┴─────┴─────┘"
+  },
+  {
+   "title": "LazyFrame.sql only knows the calling frame, under the name 'self'",
+   "applies_to": [
+    "LazyFrame.sql"
+   ],
+   "trap": "`LazyFrame.sql` registers only the calling frame, and it registers it as the table `self`. Writing `FROM df` with your Python variable name fails. Use `FROM self`, or pass `table_name=` to choose the name. To query other frames from your globals, use `pl.sql` or `pl.SQLContext`.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 2, 3]})\ntry:\n    lf.sql(\"SELECT a FROM lf WHERE a > 1\").collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nprint(lf.sql(\"SELECT a FROM self WHERE a > 1\").collect())\nprint(lf.sql(\"SELECT a FROM t WHERE a > 1\", table_name=\"t\").collect())",
+   "output": "SQLInterfaceError\nshape: (2, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 2   │\n│ 3   │\n└─────┘\nshape: (2, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 2   │\n│ 3   │\n└─────┘"
+  }
+ ],
+ "failed": []
+}

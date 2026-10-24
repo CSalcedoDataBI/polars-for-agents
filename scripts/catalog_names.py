@@ -28,6 +28,18 @@ INLINE = re.compile(r"`([^`\n]+)`")
 QUALIFIED = re.compile(r"^(pl|cs|Expr|DataFrame|LazyFrame|Series)((?:\.[A-Za-z_]\w*)+)(?:\(.*\))?$")
 # Python builtins that examples use on Polars results (`df.shape`, `.items()` on a dict).
 PYTHON_ATTRS = {"items", "keys", "values", "append", "join", "format", "upper", "lower", "split", "strip"}
+# A dunder attribute is Python's, never a Polars API name: `type(e).__name__` prints an exception
+# class name, the idiom the drafting prompt asks for when showing a failing call.
+DUNDER = re.compile(r"^__\w+__$")
+# Methods of file-like buffers (`io.StringIO`/`io.BytesIO`) that an example uses to read or write
+# in memory instead of touching a file. None of these is a member of any Polars class.
+IO_ATTRS = {"read", "write", "seek", "tell", "getvalue", "getbuffer", "readline", "readlines",
+            "truncate", "flush", "close"}
+# Real Polars methods reached through the `pl.when(...).then(...).otherwise(...)` chain. They live
+# on the private `When`/`Then` classes (`polars.expr.whenthen`), which are not in `pl.__all__`, so
+# the `__all__`-scoped export does not list them. They exist in the installed engine, so naming
+# them is not invention -- the one promise this check protects is kept.
+WHENTHEN = {"then", "otherwise"}
 
 
 def catalog_path() -> Path:
@@ -115,7 +127,8 @@ def check_code(code: str) -> list[str]:
                 if node.attr not in cat[node.value.id]:
                     errors.append(f"`{node.value.id}.{node.attr}` is not in polars {cat['version']}")
                 continue
-            if root_name(node) in other_modules or node.attr in PYTHON_ATTRS:
+            if (root_name(node) in other_modules or node.attr in PYTHON_ATTRS
+                    or DUNDER.match(node.attr) or node.attr in IO_ATTRS or node.attr in WHENTHEN):
                 continue
             if node.attr not in cat["members"] and node.attr not in cat["groups"].get("Expr", set()):
                 errors.append(f"`.{node.attr}` is not a member of any Polars class in {cat['version']}")

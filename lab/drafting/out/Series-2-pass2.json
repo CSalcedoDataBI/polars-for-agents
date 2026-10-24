@@ -1,0 +1,65 @@
+{
+ "chunk": "Series-2-pass2",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Series.explode turns empty lists into nulls by default",
+   "applies_to": [
+    "Series.explode"
+   ],
+   "trap": "`Series.explode` defaults to `empty_as_null=True` and `keep_nulls=True`. An empty list therefore produces a `null` row instead of disappearing, and a `null` list also produces a `null` row. Counts and lengths taken after exploding include these extra nulls. Pass `empty_as_null=False` to drop empty lists. Pass `keep_nulls=False` to drop null lists.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [[1, 2], [], None])\nprint(s.explode().to_list())\nprint(s.explode(empty_as_null=False).to_list())\nprint(s.explode(empty_as_null=False, keep_nulls=False).to_list())",
+   "output": "[1, 2, None, None]\n[1, 2, None]\n[1, 2]"
+  },
+  {
+   "title": "Series.first and Series.last return None when the edge value is null",
+   "applies_to": [
+    "Series.first",
+    "Series.last"
+   ],
+   "trap": "`Series.first` and `Series.last` default to `ignore_nulls=False`. They return the literal first or last element, so a leading or trailing null gives `None` even when the Series has real values. If you want the first or last non-null value, pass `ignore_nulls=True`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [None, 2, 3, None])\nprint(s.first(), s.last())\nprint(s.first(ignore_nulls=True), s.last(ignore_nulls=True))",
+   "output": "None None\n2 3"
+  },
+  {
+   "title": "Series.kurtosis is biased Fisher kurtosis by default",
+   "applies_to": [
+    "Series.kurtosis"
+   ],
+   "trap": "`Series.kurtosis` defaults to `fisher=True, bias=True`. It returns excess kurtosis (normal distribution gives 0.0) computed from biased moment estimators. Code ported from tools that report a bias-corrected sample kurtosis will silently get different numbers. Pass `bias=False` for the bias-corrected estimate. Pass `fisher=False` for Pearson kurtosis (normal distribution gives 3.0).",
+   "example": "import polars as pl\n\ns = pl.Series(\"grades\", [66, 79, 54, 97, 96, 70, 69, 85, 93, 75])\nprint(s.kurtosis())\nprint(s.kurtosis(bias=False))\nprint(s.kurtosis(fisher=False))",
+   "output": "-1.0522623626787952\n-0.8959638197357283\n1.9477376373212048"
+  },
+  {
+   "title": "Series.is_close has no absolute tolerance by default, so comparisons with 0 fail",
+   "applies_to": [
+    "Series.is_close"
+   ],
+   "trap": "`Series.is_close` mirrors Python's `math.isclose`, not `numpy.isclose`. The defaults are `rel_tol=1e-09` and `abs_tol=0.0`. With these defaults, a tiny value such as 1e-12 is never close to 0.0, because the relative tolerance scales with the operands. Set `abs_tol` explicitly when comparing near zero. Also, NaN is not close to NaN unless you pass `nans_equal=True`.",
+   "example": "import polars as pl\n\ns = pl.Series(\"s\", [1e-12, float(\"nan\")])\nprint(s.is_close(0.0).to_list())\nprint(s.is_close(0.0, abs_tol=1e-9).to_list())\nn = pl.Series(\"n\", [float(\"nan\")])\nprint(n.is_close(float(\"nan\")).to_list())\nprint(n.is_close(float(\"nan\"), nans_equal=True).to_list())",
+   "output": "[False, False]\n[True, False]\n[False]\n[True]"
+  },
+  {
+   "title": "Use min_samples, not min_periods, in Series.ewm_mean, Series.ewm_std and Series.ewm_var",
+   "applies_to": [
+    "Series.ewm_mean",
+    "Series.ewm_std",
+    "Series.ewm_var"
+   ],
+   "trap": "Since 1.21.0 the warm-up parameter of the EWM methods is `min_samples`; the old `min_periods` name was renamed. Write `min_samples` in new code. Positions with fewer observations than `min_samples` are null. `adjust=True` is the default and uses decaying weights. `adjust=False` uses the recursive formula and gives different early values, so choose it deliberately.",
+   "example": "import polars as pl\n\ns = pl.Series(\"x\", [1.0, 2.0, 3.0])\nprint(s.ewm_mean(alpha=0.5, min_samples=2).to_list())\nprint(s.ewm_mean(alpha=0.5).to_list())\nprint(s.ewm_mean(alpha=0.5, adjust=False).to_list())",
+   "output": "[None, 1.6666666666666665, 2.4285714285714284]\n[1.0, 1.6666666666666665, 2.4285714285714284]\n[1.0, 1.5, 2.25]"
+  },
+  {
+   "title": "Do not persist Series.hash values: they are only stable within one Polars version",
+   "applies_to": [
+    "Series.hash"
+   ],
+   "trap": "`Series.hash` is deterministic for a given seed only within a single Polars version. The docstring explicitly does not guarantee stable results across versions. Do not store these hashes as keys in files or databases, or compare them with hashes computed by another Polars install. Use them only for in-process work such as bucketing or deduplication. Different seeds also give different hashes, so keep the seed fixed when comparing.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, 3])\nh1 = s.hash(seed=0)\nh2 = s.hash(seed=0)\nh3 = s.hash(seed=1)\nprint(h1.dtype)\nprint(h1.to_list() == h2.to_list())\nprint(h1.to_list() == h3.to_list())",
+   "output": "UInt64\nTrue\nFalse"
+  }
+ ],
+ "failed": []
+}

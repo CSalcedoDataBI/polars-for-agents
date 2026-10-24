@@ -1,0 +1,80 @@
+{
+ "chunk": "LazyFrame-1-pass2",
+ "group": "LazyFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "join_asof matches the previous key by default and needs both sides sorted on the key",
+   "applies_to": [
+    "LazyFrame.join_asof"
+   ],
+   "trap": "`LazyFrame.join_asof` defaults to `strategy='backward'`. Each left row gets the last right row whose key is less than or equal to its own key, not the nearest one. Exact key matches are accepted because `allow_exact_matches=True`. Left rows that have no earlier right key get null, just as in a left join. Both frames must be sorted by the `on` key (and within each `by` group), so call `LazyFrame.sort` first. Pass `strategy='forward'` or `strategy='nearest'` explicitly when that is what you mean.",
+   "example": "import polars as pl\n\nleft = pl.LazyFrame({\"t\": [1, 5, 10], \"x\": [\"a\", \"b\", \"c\"]}).sort(\"t\")\nright = pl.LazyFrame({\"t\": [2, 5, 8], \"v\": [20, 50, 80]}).sort(\"t\")\n\n# default: backward search, exact matches allowed\nprint(left.join_asof(right, on=\"t\").collect())\n# forward search gives different values\nprint(left.join_asof(right, on=\"t\", strategy=\"forward\").collect())\n# exclude exact key matches\nprint(left.join_asof(right, on=\"t\", allow_exact_matches=False).collect())\n",
+   "output": "shape: (3, 3)\n┌─────┬─────┬──────┐\n│ t   ┆ x   ┆ v    │\n│ --- ┆ --- ┆ ---  │\n│ i64 ┆ str ┆ i64  │\n╞═════╪═════╪══════╡\n│ 1   ┆ a   ┆ null │\n│ 5   ┆ b   ┆ 50   │\n│ 10  ┆ c   ┆ 80   │\n└─────┴─────┴──────┘\nshape: (3, 3)\n┌─────┬─────┬──────┐\n│ t   ┆ x   ┆ v    │\n│ --- ┆ --- ┆ ---  │\n│ i64 ┆ str ┆ i64  │\n╞═════╪═════╪══════╡\n│ 1   ┆ a   ┆ 20   │\n│ 5   ┆ b   ┆ 50   │\n│ 10  ┆ c   ┆ null │\n└─────┴─────┴──────┘\nshape: (3, 3)\n┌─────┬─────┬──────┐\n│ t   ┆ x   ┆ v    │\n│ --- ┆ --- ┆ ---  │\n│ i64 ┆ str ┆ i64  │\n╞═════╪═════╪══════╡\n│ 1   ┆ a   ┆ null │\n│ 5   ┆ b   ┆ 20   │\n│ 10  ┆ c   ┆ 80   │\n└─────┴─────┴──────┘"
+  },
+  {
+   "title": "join_where is an inner join that does not preserve row order",
+   "applies_to": [
+    "LazyFrame.join_where"
+   ],
+   "trap": "`LazyFrame.join_where` performs an inner join, so left rows that satisfy no predicate disappear. It is not a left join. A left row can also appear several times, once per matching right row. The row order of the inputs is not preserved, so sort the result with `LazyFrame.sort` if you need deterministic output. When a column name exists in both frames, refer to the right-hand column with its suffix (default `_right`) in the predicate. The API is experimental.",
+   "example": "import polars as pl\n\neast = pl.LazyFrame({\"id\": [1, 2, 3], \"lo\": [0, 10, 20]})\nwest = pl.LazyFrame({\"wid\": [7, 8], \"val\": [5, 15]})\n\nout = (\n    east.join_where(west, pl.col(\"val\") > pl.col(\"lo\"))\n    .sort(\"id\", \"wid\")\n    .collect()\n)\n# id=3 is gone (no match); id=1 appears twice\nprint(out)\nprint(out.height)\n",
+   "output": "shape: (3, 4)\n┌─────┬─────┬─────┬─────┐\n│ id  ┆ lo  ┆ wid ┆ val │\n│ --- ┆ --- ┆ --- ┆ --- │\n│ i64 ┆ i64 ┆ i64 ┆ i64 │\n╞═════╪═════╪═════╪═════╡\n│ 1   ┆ 0   ┆ 7   ┆ 5   │\n│ 1   ┆ 0   ┆ 8   ┆ 15  │\n│ 2   ┆ 10  ┆ 8   ┆ 15  │\n└─────┴─────┴─────┴─────┘\n3"
+  },
+  {
+   "title": "interpolate turns integer columns into Float64 and leaves edge nulls",
+   "applies_to": [
+    "LazyFrame.interpolate"
+   ],
+   "trap": "`LazyFrame.interpolate` is linear, and integer columns come back as `f64`, as the docstring example shows. Code that expects the original integer dtype will break. Nulls at the start and end of a column are not filled; they stay null. Add `Expr.forward_fill` / `Expr.backward_fill` (or `Expr.fill_null`) for the edges. Cast back with `LazyFrame.cast` if you need integers.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [None, 1, None, 3, None]})\n\nout = lf.interpolate().collect()\nprint(out)  # [null, 1.0, 2.0, 3.0, null] as f64\nprint(out.dtypes)\n\nfixed = (\n    lf.interpolate()\n    .with_columns(pl.col(\"a\").forward_fill().backward_fill())\n    .cast({\"a\": pl.Int64})\n    .collect()\n)\nprint(fixed)\n",
+   "output": "shape: (5, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ f64  │\n╞══════╡\n│ null │\n│ 1.0  │\n│ 2.0  │\n│ 3.0  │\n│ null │\n└──────┘\n[Float64]\nshape: (5, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 1   │\n│ 1   │\n│ 2   │\n│ 3   │\n│ 3   │\n└─────┘"
+  },
+  {
+   "title": "explode keeps empty and null lists as null rows by default",
+   "applies_to": [
+    "LazyFrame.explode"
+   ],
+   "trap": "`LazyFrame.explode` defaults to `empty_as_null=True` and `keep_nulls=True`. An empty list becomes one row with a null value, and so does a null list. This differs from SQL-style `UNNEST`, which drops those rows. Counts and joins on the exploded frame then include phantom null rows. Pass `empty_as_null=False, keep_nulls=False` to drop them instead.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"k\": [\"a\", \"b\", \"c\"], \"v\": [[1, 2], [], None]})\n\ndefault = lf.explode(\"v\").collect()\nprint(default)  # b and c each produce a null row\nprint(default.height)\n\ndropped = lf.explode(\"v\", empty_as_null=False, keep_nulls=False).collect()\nprint(dropped)\nprint(dropped.height)\n",
+   "output": "shape: (4, 2)\n┌─────┬──────┐\n│ k   ┆ v    │\n│ --- ┆ ---  │\n│ str ┆ i64  │\n╞═════╪══════╡\n│ a   ┆ 1    │\n│ a   ┆ 2    │\n│ b   ┆ null │\n│ c   ┆ null │\n└─────┴──────┘\n4\nshape: (2, 2)\n┌─────┬─────┐\n│ k   ┆ v   │\n│ --- ┆ --- │\n│ str ┆ i64 │\n╞═════╪═════╡\n│ a   ┆ 1   │\n│ a   ┆ 2   │\n└─────┴─────┘\n2"
+  },
+  {
+   "title": "cast is strict by default, and strict=False silently produces nulls",
+   "applies_to": [
+    "LazyFrame.cast"
+   ],
+   "trap": "`LazyFrame.cast` defaults to `strict=True`. A value that cannot be represented in the target type, such as an overflow, raises an error. On a LazyFrame that error surfaces only at `LazyFrame.collect`, not at the `cast` call. Setting `strict=False` does not clamp or wrap the value: it silently replaces it with null. Check `LazyFrame.null_count` afterwards if you rely on non-strict casts.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1, 300]})\n\nplan = lf.cast({\"a\": pl.UInt8})  # no error yet: lazy\ntry:\n    plan.collect()\nexcept Exception as e:\n    print(type(e).__name__)\n\nloose = lf.cast({\"a\": pl.UInt8}, strict=False)\nprint(loose.collect())  # 300 became null\nprint(loose.null_count().collect())\n",
+   "output": "InvalidOperationError\nshape: (2, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ u8   │\n╞══════╡\n│ 1    │\n│ null │\n└──────┘\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ u32 │\n╞═════╡\n│ 1   │\n└─────┘"
+  },
+  {
+   "title": "drop and rename raise on unknown columns unless strict=False",
+   "applies_to": [
+    "LazyFrame.drop",
+    "LazyFrame.rename"
+   ],
+   "trap": "`LazyFrame.drop` and `LazyFrame.rename` default to `strict=True`. Naming a column that is not in the schema raises an error. Do not expect it to be ignored, and there is no pandas-style `errors='ignore'` argument. Pass `strict=False` to skip missing names. For `LazyFrame.rename`, `strict` has no effect when you pass a function as the mapping.",
+   "example": "import polars as pl\n\nlf = pl.LazyFrame({\"a\": [1], \"b\": [2]})\n\ntry:\n    lf.drop(\"zzz\").collect()\nexcept Exception as e:\n    print(type(e).__name__)\nprint(lf.drop(\"zzz\", \"b\", strict=False).collect().columns)\n\ntry:\n    lf.rename({\"zzz\": \"y\"}).collect()\nexcept Exception as e:\n    print(type(e).__name__)\nprint(lf.rename({\"zzz\": \"y\", \"a\": \"x\"}, strict=False).collect().columns)\n",
+   "output": "ColumnNotFoundError\n['a']\nColumnNotFoundError\n['x', 'b']"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "Resolve a LazyFrame schema once with collect_schema instead of .columns/.dtypes/.schema",
+    "applies_to": [
+     "LazyFrame.columns",
+     "LazyFrame.dtypes",
+     "LazyFrame.schema",
+     "LazyFrame.collect_schema"
+    ],
+    "trap": "On a LazyFrame, `LazyFrame.columns`, `LazyFrame.dtypes` and `LazyFrame.schema` resolve the whole schema on every access. That can mean reading file metadata or making network requests for scanned sources. These properties exist only for symmetry with `DataFrame`. Call `LazyFrame.collect_schema` once, keep the result, and read names and dtypes from it, especially inside loops or comprehensions.",
+    "example": "import polars as pl\n\nlf = pl.LazyFrame({\"foo\": [1, 2], \"bar\": [1.5, 2.5], \"ham\": [\"a\", \"b\"]})\nlf = lf.with_columns((pl.col(\"foo\") * 2).alias(\"foo2\"))\n\nschema = lf.collect_schema()  # resolve once\nnumeric = [name for name, dtype in schema.items() if dtype.is_numeric()]\nprint(numeric)\nprint(lf.select(numeric).collect())\n"
+   },
+   "problems": [
+    "`.is_numeric` is not a member of any Polars class in 1.38.1"
+   ]
+  }
+ ]
+}
