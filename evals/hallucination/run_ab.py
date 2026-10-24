@@ -82,7 +82,9 @@ def invented(text):
         for e in cn.check_code(block):
             if "does not parse" in e or "takes `" in e:
                 continue
-            if any(f".{n}" in e for n in KNOWN_VALID_UNCHECKED):
+            # Match the EXACT reported attribute (the checker backticks it, `.then`), not a
+            # substring of the message: a substring would also swallow an invented `.then_fill`.
+            if any(f"`.{n}`" in e for n in KNOWN_VALID_UNCHECKED):
                 continue
             out.append(e)
     return out

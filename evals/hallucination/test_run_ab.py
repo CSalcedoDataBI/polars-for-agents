@@ -37,6 +37,18 @@ class Metric(unittest.TestCase):
         # Naming a dead/wrong API in prose to contrast it is not a hallucination.
         self.assertEqual(run_ab.invented("Avoid `pl.load_csv`; use `pl.read_csv`."), [])
 
+    def test_builder_methods_allowlisted(self):
+        # pl.when().then().otherwise() is valid; the checker misses When/Then, so these are
+        # allowlisted and must not count.
+        text = ("```python\n"
+                "df.with_columns(pl.when(pl.col(\"p\") > 100).then(pl.lit(\"hi\"))"
+                ".otherwise(pl.lit(\"lo\")))\n```")
+        self.assertEqual(run_ab.invented(text), [])
+
+    def test_allowlist_is_exact_not_substring(self):
+        # A real invention whose name starts with an allowlisted word must still be flagged.
+        self.assertTrue(run_ab.invented("```python\npl.col(\"x\").then_fill(0)\n```"))
+
     def test_parse_and_param_errors_not_counted(self):
         # A keyword-argument mismatch is a real checker finding but NOT a name invention.
         param = run_ab.invented("```python\npl.col(\"x\").sum(not_a_real_kwarg=1)\n```")
