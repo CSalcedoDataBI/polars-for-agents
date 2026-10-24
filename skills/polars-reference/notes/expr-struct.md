@@ -4,44 +4,6 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
-## Wrap plain columns in pl.struct before calling Expr.struct.json_encode
-
-Applies to: `Expr.struct.json_encode`
-
-`Expr.struct.json_encode` exists only in the `.struct` namespace and only works on a Struct column. There is no top-level `json_encode` on `Expr`, and calling `.struct.json_encode()` on a plain column raises an error. To serialise several columns per row (a pandas `to_json(orient='records')` habit), first combine them with `pl.struct`, then call `Expr.struct.json_encode`. Null field values are written as JSON `null` and the key is kept, so downstream consumers must not assume missing keys mean null.
-
-```python
-import polars as pl
-
-df = pl.DataFrame({"a": [1, 2], "b": ["x", None]})
-
-# Wrong: column 'a' is Int64, not a Struct
-try:
-    df.select(pl.col("a").struct.json_encode())
-except Exception as e:
-    print(type(e).__name__)
-
-# Right: build a struct first, then encode it
-out = df.select(pl.struct("a", "b").struct.json_encode().alias("json"))
-print(out)
-print(out["json"].to_list())
-```
-
-Output:
-
-```text
-shape: (2, 1)
-┌──────────────────┐
-│ json             │
-│ ---              │
-│ str              │
-╞══════════════════╡
-│ {"a":1,"b":"x"}  │
-│ {"a":2,"b":null} │
-└──────────────────┘
-['{"a":1,"b":"x"}', '{"a":2,"b":null}']
-```
-
 ## Inside struct.with_fields use pl.field for struct fields, not pl.col or bare strings
 
 Applies to: `Expr.struct.with_fields`, `pl.field`, `pl.col`

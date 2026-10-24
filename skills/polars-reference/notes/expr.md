@@ -490,40 +490,6 @@ shape: (4, 2)
 └───────┴───────┘
 ```
 
-## Expr.get raises on out-of-bounds indices unless null_on_oob=True
-
-Applies to: `Expr.get`
-
-By default `Expr.get` raises an error when the index is out of bounds (`null_on_oob=False`). In a `DataFrame.group_by` aggregation, a single short group makes the whole query fail. Pass `null_on_oob=True` to get null for groups that are too short.
-
-```python
-import polars as pl
-
-df = pl.DataFrame({"g": ["a", "a", "b"], "v": [1, 2, 3]})
-try:
-    df.group_by("g", maintain_order=True).agg(pl.col("v").get(1))
-except Exception as e:
-    print(type(e).__name__)
-out = df.group_by("g", maintain_order=True).agg(
-    pl.col("v").get(1, null_on_oob=True)
-)
-print(out)
-```
-
-Output:
-
-```text
-shape: (2, 2)
-┌─────┬──────┐
-│ g   ┆ v    │
-│ --- ┆ ---  │
-│ str ┆ i64  │
-╞═════╪══════╡
-│ a   ┆ 2    │
-│ b   ┆ null │
-└─────┴──────┘
-```
-
 ## Expr.item errors unless there is exactly one value
 
 Applies to: `Expr.item`

@@ -22,15 +22,6 @@
    "output": "shape: (4, 2)\n┌───────┬───────┐\n│ ffill ┆ fixed │\n│ ---   ┆ ---   │\n│ f64   ┆ f64   │\n╞═══════╪═══════╡\n│ 1.0   ┆ 1.0   │\n│ 1.0   ┆ 1.0   │\n│ NaN   ┆ 1.0   │\n│ NaN   ┆ 1.0   │\n└───────┴───────┘"
   },
   {
-   "title": "Expr.get raises on out-of-bounds indices unless null_on_oob=True",
-   "applies_to": [
-    "Expr.get"
-   ],
-   "trap": "By default `Expr.get` raises an error when the index is out of bounds (`null_on_oob=False`). In a `DataFrame.group_by` aggregation, a single short group makes the whole query fail. Pass `null_on_oob=True` to get null for groups that are too short.",
-   "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [1, 2, 3]})\ntry:\n    df.group_by(\"g\", maintain_order=True).agg(pl.col(\"v\").get(1))\nexcept Exception as e:\n    print(type(e).__name__)\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").get(1, null_on_oob=True)\n)\nprint(out)\n",
-   "output": "shape: (2, 2)\n┌─────┬──────┐\n│ g   ┆ v    │\n│ --- ┆ ---  │\n│ str ┆ i64  │\n╞═════╪══════╡\n│ a   ┆ 2    │\n│ b   ┆ null │\n└─────┴──────┘"
-  },
-  {
    "title": "Expr.item errors unless there is exactly one value",
    "applies_to": [
     "Expr.item"
@@ -76,5 +67,20 @@
    "output": "shape: (2, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ u32 │\n╞═════╡\n│ 3   │\n│ 2   │\n└─────┘\n5 7"
   }
  ],
- "failed": []
+ "failed": [
+  {
+   "note": {
+    "title": "Expr.get raises on out-of-bounds indices unless null_on_oob=True",
+    "applies_to": [
+     "Expr.get"
+    ],
+    "trap": "By default `Expr.get` raises an error when the index is out of bounds (`null_on_oob=False`). In a `DataFrame.group_by` aggregation, a single short group makes the whole query fail. Pass `null_on_oob=True` to get null for groups that are too short.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [1, 2, 3]})\ntry:\n    df.group_by(\"g\", maintain_order=True).agg(pl.col(\"v\").get(1))\nexcept Exception as e:\n    print(type(e).__name__)\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").get(1, null_on_oob=True)\n)\nprint(out)\n",
+    "output": "shape: (2, 2)\n┌─────┬──────┐\n│ g   ┆ v    │\n│ --- ┆ ---  │\n│ str ┆ i64  │\n╞═════╪══════╡\n│ a   ┆ 2    │\n│ b   ┆ null │\n└─────┴──────┘"
+   },
+   "problems": [
+    "example catches and prints an exception type, but the run shows none: the trap's error claim is not demonstrated"
+   ]
+  }
+ ]
 }

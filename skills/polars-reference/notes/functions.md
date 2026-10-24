@@ -193,30 +193,6 @@ shape: (1, 1)
 └─────┘
 ```
 
-## pl.exclude treats a pattern as a regex only when it is wrapped in ^...$
-
-Applies to: `pl.exclude`
-
-`pl.exclude` accepts regular expressions, but only when they start with `^` and end with `$`. A pattern such as `.*a` is taken as a literal column name, so it does not remove the columns you meant to drop. Anchor the pattern as `^.*a$`.
-
-```python
-import polars as pl
-
-df = pl.DataFrame({"aa": [1], "ba": ["x"], "cc": [2.5]})
-try:
-    print(df.select(pl.exclude(".*a")).columns)
-except Exception as e:
-    print(type(e).__name__)
-print(df.select(pl.exclude("^.*a$")).columns)
-```
-
-Output:
-
-```text
-['aa', 'ba', 'cc']
-['cc']
-```
-
 ## pl.arctan2d is deprecated; use pl.arctan2 then Expr.degrees
 
 Applies to: `pl.arctan2d`, `pl.arctan2`

@@ -50,15 +50,6 @@
    "output": "TypeError\nshape: (3, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ i64  │\n╞══════╡\n│ 1    │\n│ null │\n│ 3    │\n└──────┘\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ u32 │\n╞═════╡\n│ 1   │\n└─────┘"
   },
   {
-   "title": "pl.exclude treats a pattern as a regex only when it is wrapped in ^...$",
-   "applies_to": [
-    "pl.exclude"
-   ],
-   "trap": "`pl.exclude` accepts regular expressions, but only when they start with `^` and end with `$`. A pattern such as `.*a` is taken as a literal column name, so it does not remove the columns you meant to drop. Anchor the pattern as `^.*a$`.",
-   "example": "import polars as pl\n\ndf = pl.DataFrame({\"aa\": [1], \"ba\": [\"x\"], \"cc\": [2.5]})\ntry:\n    print(df.select(pl.exclude(\".*a\")).columns)\nexcept Exception as e:\n    print(type(e).__name__)\nprint(df.select(pl.exclude(\"^.*a$\")).columns)\n",
-   "output": "['aa', 'ba', 'cc']\n['cc']"
-  },
-  {
    "title": "pl.arctan2d is deprecated; use pl.arctan2 then Expr.degrees",
    "applies_to": [
     "pl.arctan2d",
@@ -69,5 +60,20 @@
    "output": "shape: (2, 2)\n┌───────────┬─────────┐\n│ radians   ┆ degrees │\n│ ---       ┆ ---     │\n│ f64       ┆ f64     │\n╞═══════════╪═════════╡\n│ 0.785398  ┆ 45.0    │\n│ -2.356194 ┆ -135.0  │\n└───────────┴─────────┘"
   }
  ],
- "failed": []
+ "failed": [
+  {
+   "note": {
+    "title": "pl.exclude treats a pattern as a regex only when it is wrapped in ^...$",
+    "applies_to": [
+     "pl.exclude"
+    ],
+    "trap": "`pl.exclude` accepts regular expressions, but only when they start with `^` and end with `$`. A pattern such as `.*a` is taken as a literal column name, so it does not remove the columns you meant to drop. Anchor the pattern as `^.*a$`.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"aa\": [1], \"ba\": [\"x\"], \"cc\": [2.5]})\ntry:\n    print(df.select(pl.exclude(\".*a\")).columns)\nexcept Exception as e:\n    print(type(e).__name__)\nprint(df.select(pl.exclude(\"^.*a$\")).columns)\n",
+    "output": "['aa', 'ba', 'cc']\n['cc']"
+   },
+   "problems": [
+    "example catches and prints an exception type, but the run shows none: the trap's error claim is not demonstrated"
+   ]
+  }
+ ]
 }
