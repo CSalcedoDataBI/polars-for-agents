@@ -4,6 +4,158 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
+## Use Expr.arr.agg to reduce each array and Expr.arr.eval to keep its shape
+
+Applies to: `Expr.arr.agg`, `Expr.arr.eval`
+
+`Expr.arr.agg` explodes the result automatically. An aggregation such as `pl.element().null_count()` gives one scalar per row, and a non-aggregation such as `drop_nulls()` gives a `list` column. `Expr.arr.eval` does not explode, so `pl.element().rank()` returns an `array` of the same width. If the expression can return a different number of elements per row, pass `as_list=True` to `Expr.arr.eval`; otherwise the result cannot fit the fixed-width array type.
+
+```python
+import polars as pl
+
+df = pl.Series("a", [[1, None], [42, 13]], pl.Array(pl.Int64, 2)).to_frame()
+
+# agg: aggregation gives a scalar per row
+print(df.select(pl.col("a").arr.agg(pl.element().null_count()).alias("nc")).schema)
+# eval: keeps the array shape
+print(df.select(pl.col("a").arr.eval(pl.element().rank()).alias("rk")).schema)
+
+# variable-length output without as_list
+try:
+    print(df.select(pl.col("a").arr.eval(pl.element().drop_nulls()).alias("x")))
+except Exception as e:
+    print(type(e).__name__)
+
+# right: collect as list
+print(df.select(pl.col("a").arr.eval(pl.element().drop_nulls(), as_list=True).alias("x")))
+```
+
+Output:
+
+```text
+Schema({'nc': UInt32})
+Schema({'rk': Array(Float64, shape=(2,))})
+InvalidOperationError
+shape: (2, 1)
+┌───────────┐
+│ x         │
+│ ---       │
+│ list[i64] │
+╞═══════════╡
+│ [1]       │
+│ [42, 13]  │
+└───────────┘
+```
+
+## Expr.arr.shift moves values inside each array, Expr.shift moves whole rows
+
+Applies to: `Expr.arr.shift`
+
+`Expr.shift` on an Array column shifts the rows, so the first row becomes null. `Expr.arr.shift` shifts the elements inside every array. It does not rotate them: vacated slots are filled with null and the array width stays the same. A negative `n` shifts toward the front, like SQL `LEAD`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame(
+    {"a": [[1, 2, 3], [4, 5, 6]]}, schema={"a": pl.Array(pl.Int64, 3)}
+)
+out = df.with_columns(
+    row_shift=pl.col("a").shift(),
+    elem_shift=pl.col("a").arr.shift(),
+    elem_lead=pl.col("a").arr.shift(-2),
+)
+print(out.rows())
+```
+
+Output:
+
+```text
+[([1, 2, 3], None, [None, 1, 2], [3, None, None]), ([4, 5, 6], [1, 2, 3], [None, 4, 5], [6, None, None])]
+```
+
+## Convert with Expr.arr.to_list before using list-only operations
+
+Applies to: `Expr.arr.to_list`
+
+The `Expr.arr` namespace is smaller than `Expr.list`. It has no `drop_nulls`, `filter`, `gather` or set operations such as `Expr.list.set_union`. Do not assume that calling `Expr.list` methods on an `Array` column will work. Convert explicitly with `Expr.arr.to_list`, which keeps the inner dtype, and then use the `Expr.list` method.
+
+```python
+import polars as pl
+
+df = pl.DataFrame(
+    {"a": [[1, None], [3, 4]]}, schema={"a": pl.Array(pl.Int64, 2)}
+)
+try:
+    print(df.select(pl.col("a").list.drop_nulls()))
+except Exception as e:
+    print(type(e).__name__)
+
+out = df.select(pl.col("a").arr.to_list().list.drop_nulls())
+print(out.schema)
+print(out["a"].to_list())
+```
+
+Output:
+
+```text
+InvalidOperationError
+Schema({'a': List(Int64)})
+[[1], [3, 4]]
+```
+
+## Expr.arr.explode keeps a null row for null arrays by default
+
+Applies to: `Expr.arr.explode`
+
+With the default `keep_nulls=True`, a null array becomes a single null row rather than disappearing. Counts and joins on the exploded column then include a spurious null. Pass `keep_nulls=False` to drop those rows. `empty_as_null` likewise defaults to True.
+
+```python
+import polars as pl
+
+df = pl.DataFrame(
+    {"a": [[1, 2], None]}, schema={"a": pl.Array(pl.Int64, 2)}
+)
+default = df.select(pl.col("a").arr.explode())
+dropped = df.select(pl.col("a").arr.explode(keep_nulls=False))
+print(default["a"].to_list())
+print(dropped["a"].to_list())
+```
+
+Output:
+
+```text
+[1, 2, None]
+[1, 2]
+```
+
+## Expr.arr.sort puts nulls first unless nulls_last=True
+
+Applies to: `Expr.arr.sort`
+
+`Expr.arr.sort` defaults to `nulls_last=False`, so null elements come first in every sorted array. This applies to both ascending and descending order. Code that then takes the first element as the minimum (or as the maximum after `descending=True`) gets null. Pass `nulls_last=True` when nulls should sink to the end.
+
+```python
+import polars as pl
+
+df = pl.DataFrame(
+    {"a": [[3, None, 1]]}, schema={"a": pl.Array(pl.Int64, 3)}
+)
+out = df.select(
+    default=pl.col("a").arr.sort(),
+    desc=pl.col("a").arr.sort(descending=True),
+    fixed=pl.col("a").arr.sort(descending=True, nulls_last=True),
+)
+print(out.rows(named=True))
+print(out.select(pl.col("desc").arr.first(), pl.col("fixed").arr.first()).rows())
+```
+
+Output:
+
+```text
+[{'default': [None, 1, 3], 'desc': [None, 3, 1], 'fixed': [3, 1, None]}]
+[(None, 3)]
+```
+
 ## Build a real Array column before calling Expr.arr methods
 
 Applies to: `Expr.arr.sum`, `Expr.arr.max`, `Expr.arr.get`

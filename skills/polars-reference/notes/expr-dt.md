@@ -435,3 +435,170 @@ Output:
 SchemaError
 [{'days': 2, 'days_frac': 2.5}]
 ```
+
+## `Expr.dt.century` and `Expr.dt.millennium` use calendar counting, not `year // 100`
+
+Applies to: `Expr.dt.century`, `Expr.dt.millennium`
+
+`Expr.dt.century` returns the ordinal century, so 2000 is century 20 and 2001 is century 21. `Expr.dt.millennium` works the same way, so 2000 is millennium 2. If you want buckets such as "the 1900s" or "the 2000s", these results will be off by one at the boundary years. For decade or century buckets, use integer division on `Expr.dt.year` instead.
+
+```python
+import polars as pl
+from datetime import date
+
+df = pl.DataFrame({"d": [date(1999, 6, 1), date(2000, 1, 1), date(2001, 1, 1)]})
+out = df.with_columns(
+    century=pl.col("d").dt.century(),
+    hundreds_bucket=pl.col("d").dt.year() // 100,
+    millennium=pl.col("d").dt.millennium(),
+    thousands_bucket=pl.col("d").dt.year() // 1000,
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (3, 5)
+┌────────────┬─────────┬─────────────────┬────────────┬──────────────────┐
+│ d          ┆ century ┆ hundreds_bucket ┆ millennium ┆ thousands_bucket │
+│ ---        ┆ ---     ┆ ---             ┆ ---        ┆ ---              │
+│ date       ┆ i32     ┆ i32             ┆ i32        ┆ i32              │
+╞════════════╪═════════╪═════════════════╪════════════╪══════════════════╡
+│ 1999-06-01 ┆ 20      ┆ 19              ┆ 2          ┆ 1                │
+│ 2000-01-01 ┆ 20      ┆ 20              ┆ 2          ┆ 2                │
+│ 2001-01-01 ┆ 21      ┆ 20              ┆ 3          ┆ 2                │
+└────────────┴─────────┴─────────────────┴────────────┴──────────────────┘
+```
+
+## `Expr.dt.month_end` keeps the time of day, so it is not an end-of-month cutoff
+
+Applies to: `Expr.dt.month_end`, `Expr.dt.month_start`
+
+For Datetime columns, `Expr.dt.month_end` and `Expr.dt.month_start` move only the date and keep the original time of day. A value at 02:00 rolls forward to the last day of the month at 02:00, not to the end of that day. Using the result as an inclusive upper bound therefore silently drops later events on the last day. Compare at Date granularity with `Expr.dt.date` instead, or build an explicit exclusive bound.
+
+```python
+import polars as pl
+from datetime import datetime
+
+df = pl.DataFrame({"ts": [datetime(2000, 1, 15, 2), datetime(2000, 1, 31, 18), datetime(2000, 2, 1, 1)]})
+cutoff = pl.col("ts").min().dt.month_end()
+print(df.select(cutoff.alias("cutoff")))
+wrong = df.filter(pl.col("ts") <= cutoff)
+right = df.filter(pl.col("ts").dt.date() <= cutoff.dt.date())
+print("wrong rows:", wrong.height)
+print("right rows:", right.height)
+```
+
+Output:
+
+```text
+shape: (1, 1)
+┌─────────────────────┐
+│ cutoff              │
+│ ---                 │
+│ datetime[μs]        │
+╞═════════════════════╡
+│ 2000-01-31 02:00:00 │
+└─────────────────────┘
+wrong rows: 1
+right rows: 2
+```
+
+## `Expr.dt.time` fails on Date columns
+
+Applies to: `Expr.dt.time`
+
+`Expr.dt.time` works only on Datetime columns and raises an error on a Date column. If a column might be Date, for example after parsing with `Expr.str.to_date`, cast it to `pl.Datetime` first. Alternatively, use `Expr.dt.combine` to attach a time explicitly.
+
+```python
+import polars as pl
+from datetime import date
+
+df = pl.DataFrame({"d": [date(2024, 1, 1), date(2024, 6, 30)]})
+try:
+    df.select(pl.col("d").dt.time())
+except Exception as e:
+    print(type(e).__name__)
+print(df.select(pl.col("d").cast(pl.Datetime).dt.time().alias("t")))
+```
+
+Output:
+
+```text
+ComputeError
+shape: (2, 1)
+┌──────────┐
+│ t        │
+│ ---      │
+│ time     │
+╞══════════╡
+│ 00:00:00 │
+│ 00:00:00 │
+└──────────┘
+```
+
+## `Expr.dt.cast_time_unit` to a coarser unit loses precision
+
+Applies to: `Expr.dt.cast_time_unit`
+
+`Expr.dt.cast_time_unit` changes the stored unit of a Datetime, and casting to a coarser unit (for example 'us' to 'ms') discards the sub-unit part. Casting back to the finer unit does not restore the lost digits. Downcast only when you are sure the extra precision is not needed, for example when matching a join key from another source.
+
+```python
+import polars as pl
+from datetime import datetime
+
+df = pl.DataFrame({"ts": [datetime(2024, 1, 1, 0, 0, 0, 123456)]})
+out = df.select(
+    original_us=pl.col("ts").dt.microsecond(),
+    via_ms=pl.col("ts").dt.cast_time_unit("ms").dt.cast_time_unit("us").dt.microsecond(),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (1, 2)
+┌─────────────┬────────┐
+│ original_us ┆ via_ms │
+│ ---         ┆ ---    │
+│ i32         ┆ i32    │
+╞═════════════╪════════╡
+│ 123456      ┆ 123000 │
+└─────────────┴────────┘
+```
+
+## `Expr.dt.base_utc_offset` alone is not the UTC offset during DST
+
+Applies to: `Expr.dt.base_utc_offset`, `Expr.dt.dst_offset`
+
+`Expr.dt.base_utc_offset` returns only the zone's base offset, and `Expr.dt.dst_offset` returns the additional daylight-saving offset. The actual offset from UTC in effect at that moment is the sum of the two. Using the base offset alone is silently wrong by an hour throughout summer time.
+
+```python
+import polars as pl
+from datetime import datetime
+
+df = pl.DataFrame({"ts": [datetime(2020, 7, 1), datetime(2020, 12, 1)]})
+df = df.with_columns(pl.col("ts").dt.replace_time_zone("Europe/London"))
+out = df.with_columns(
+    base=pl.col("ts").dt.base_utc_offset(),
+    dst=pl.col("ts").dt.dst_offset(),
+    total=pl.col("ts").dt.base_utc_offset() + pl.col("ts").dt.dst_offset(),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (2, 4)
+┌─────────────────────────────┬──────────────┬──────────────┬──────────────┐
+│ ts                          ┆ base         ┆ dst          ┆ total        │
+│ ---                         ┆ ---          ┆ ---          ┆ ---          │
+│ datetime[μs, Europe/London] ┆ duration[ms] ┆ duration[ms] ┆ duration[ms] │
+╞═════════════════════════════╪══════════════╪══════════════╪══════════════╡
+│ 2020-07-01 00:00:00 BST     ┆ 0ms          ┆ 1h           ┆ 1h           │
+│ 2020-12-01 00:00:00 GMT     ┆ 0ms          ┆ 0ms          ┆ 0ms          │
+└─────────────────────────────┴──────────────┴──────────────┴──────────────┘
+```

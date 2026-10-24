@@ -4,6 +4,198 @@ Drafted with Claude and checked by machine against polars 1.38.1: every name bel
 `catalog/polars-1.38.1.json`, and every example was run on that version. The output
 under each example is what it printed.
 
+## diff(null_behavior="drop") shortens the column and breaks with_columns
+
+Applies to: `Expr.diff`
+
+By default `Expr.diff` keeps the input length and puts `null` in the first `n` rows, like pandas. With `null_behavior="drop"` those rows are removed, so the result has `n` fewer rows. That shorter expression cannot be added next to the original columns with `DataFrame.with_columns`, which raises an error. Keep the default `"ignore"` when adding a column. Use `"drop"` only in a `DataFrame.select` where every output has the same shortened length.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"x": [20, 10, 30, 25, 35]})
+
+try:
+    df.with_columns(d=pl.col("x").diff(null_behavior="drop"))
+except Exception as e:
+    print(type(e).__name__)
+
+# Right: keep the length (first row is null) when adding a column
+print(df.with_columns(d=pl.col("x").diff()))
+
+# "drop" is fine when the output stands alone
+print(df.select(pl.col("x").diff(null_behavior="drop")))
+```
+
+Output:
+
+```text
+ShapeError
+shape: (5, 2)
+┌─────┬──────┐
+│ x   ┆ d    │
+│ --- ┆ ---  │
+│ i64 ┆ i64  │
+╞═════╪══════╡
+│ 20  ┆ null │
+│ 10  ┆ -10  │
+│ 30  ┆ 20   │
+│ 25  ┆ -5   │
+│ 35  ┆ 10   │
+└─────┴──────┘
+shape: (4, 1)
+┌─────┐
+│ x   │
+│ --- │
+│ i64 │
+╞═════╡
+│ -10 │
+│ 20  │
+│ -5  │
+│ 10  │
+└─────┘
+```
+
+## bitwise_and/or/xor are aggregations, not element-wise operators
+
+Applies to: `Expr.bitwise_and`, `Expr.bitwise_or`, `Expr.bitwise_xor`, `Expr.and_`, `Expr.or_`, `Expr.xor`
+
+`Expr.bitwise_and`, `Expr.bitwise_or` and `Expr.bitwise_xor` take no argument. Each one reduces a whole column (or each group) to a single value. Code like `pl.col("a").bitwise_and(pl.col("b"))` fails. Using it as a row-wise combine of two columns is wrong. For element-wise bit operations between two integer columns, use `Expr.and_`, `Expr.or_` and `Expr.xor`, or the operators `&`, `|` and `^`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [12, 10], "b": [10, 6]})
+
+try:
+    df.select(pl.col("a").bitwise_and(pl.col("b")))
+except Exception as e:
+    print(type(e).__name__)
+
+# bitwise_and reduces the column to ONE value: 12 & 10 = 8
+print(df.select(pl.col("a").bitwise_and()))
+
+# Element-wise: row by row a & b -> [8, 2]
+print(df.select(pl.col("a").and_(pl.col("b")).alias("elementwise")))
+```
+
+Output:
+
+```text
+TypeError
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 8   │
+└─────┘
+shape: (2, 1)
+┌─────────────┐
+│ elementwise │
+│ ---         │
+│ i64         │
+╞═════════════╡
+│ 8           │
+│ 2           │
+└─────────────┘
+```
+
+## Out-of-domain trig results are NaN/inf, not null
+
+Applies to: `Expr.arccos`, `Expr.arcsin`, `Expr.arctanh`, `Expr.arccosh`, `Expr.is_nan`, `Expr.fill_nan`
+
+The inverse trig functions always return Float64 and never raise for bad inputs. `Expr.arctanh` of 1.0 gives `inf`, and `Expr.arccos` of 2.0 gives NaN. Polars treats NaN as a float value, not as missing, so `Expr.is_null` and `Expr.fill_null` will not catch these results. Detect them with `Expr.is_nan` or `Expr.is_finite`. Convert them with `Expr.fill_nan(None)` if you want them to behave as nulls.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [0.5, 2.0, 1.0]})
+res = df.with_columns(
+    pl.col("a").arccos().alias("acos"),
+    pl.col("a").arctanh().alias("atanh"),
+)
+print(res)
+print(res.select(
+    pl.col("acos").is_null().alias("acos_is_null"),
+    pl.col("acos").is_nan().alias("acos_is_nan"),
+    pl.col("atanh").is_finite().alias("atanh_finite"),
+))
+# Turn NaN into a real null so null handling applies
+print(res.select(pl.col("acos").fill_nan(None).is_null()))
+```
+
+Output:
+
+```text
+shape: (3, 3)
+┌─────┬──────────┬──────────┐
+│ a   ┆ acos     ┆ atanh    │
+│ --- ┆ ---      ┆ ---      │
+│ f64 ┆ f64      ┆ f64      │
+╞═════╪══════════╪══════════╡
+│ 0.5 ┆ 1.047198 ┆ 0.549306 │
+│ 2.0 ┆ NaN      ┆ NaN      │
+│ 1.0 ┆ 0.0      ┆ inf      │
+└─────┴──────────┴──────────┘
+shape: (3, 3)
+┌──────────────┬─────────────┬──────────────┐
+│ acos_is_null ┆ acos_is_nan ┆ atanh_finite │
+│ ---          ┆ ---         ┆ ---          │
+│ bool         ┆ bool        ┆ bool         │
+╞══════════════╪═════════════╪══════════════╡
+│ false        ┆ false       ┆ true         │
+│ false        ┆ true        ┆ false        │
+│ false        ┆ false       ┆ false        │
+└──────────────┴─────────────┴──────────────┘
+shape: (3, 1)
+┌───────┐
+│ acos  │
+│ ---   │
+│ bool  │
+╞═══════╡
+│ false │
+│ true  │
+│ false │
+└───────┘
+```
+
+## cum_sum leaves null rows null and widens small ints to Int64
+
+Applies to: `Expr.cum_sum`, `Expr.cum_prod`, `Expr.cum_max`, `Expr.cum_min`
+
+`Expr.cum_sum` and the other cumulative functions skip nulls, but the output is still `null` at those positions. It does not carry the running total forward, as a SQL running SUM would. If every row needs the total so far, chain `.fill_null(strategy="forward")`. `Expr.cum_sum` and `Expr.cum_prod` also cast Int8, UInt8, Int16 and UInt16 input to Int64. The output schema therefore differs from the input schema.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"v": [None, 10, None, 8]}, schema={"v": pl.Int8})
+out = df.with_columns(
+    pl.col("v").cum_sum().alias("cs"),
+    pl.col("v").cum_sum().fill_null(strategy="forward").alias("cs_filled"),
+)
+print(out)
+print(out.schema)
+```
+
+Output:
+
+```text
+shape: (4, 3)
+┌──────┬──────┬───────────┐
+│ v    ┆ cs   ┆ cs_filled │
+│ ---  ┆ ---  ┆ ---       │
+│ i8   ┆ i64  ┆ i64       │
+╞══════╪══════╪═══════════╡
+│ null ┆ null ┆ null      │
+│ 10   ┆ 10   ┆ 10        │
+│ null ┆ null ┆ 10        │
+│ 8    ┆ 18   ┆ 18        │
+└──────┴──────┴───────────┘
+Schema({'v': Int8, 'cs': Int64, 'cs_filled': Int64})
+```
+
 ## `Expr.cast` raises by default; `strict=False` silently turns bad values into nulls
 
 Applies to: `Expr.cast`
@@ -232,6 +424,227 @@ Output:
 {'group': ['one', 'two'], 'index': [[0, 2], [1, 3]]}
 ```
 
+## Float floordiv does not match Python's // operator
+
+Applies to: `Expr.floordiv`
+
+`Expr.floordiv` (and `//` on expressions) first does the float division and then floors the result. Python's `//` floors the exact quotient instead. So `6.0 // 0.1` is `59.0` in Python but `60.0` in Polars. Do not port Python or NumPy floor-division results and expect identical values on floats. If you need the exact-quotient semantics, compute it outside Polars or use integer-scaled data.
+
+```python
+import polars as pl
+
+print('python:', 6.0 // 0.1)
+df = pl.DataFrame({"x": [6.0, 6.03]})
+out = df.with_columns(
+    pl.col("x").floordiv(0.1).alias("floordiv"),
+    (pl.col("x") // 0.1).alias("op"),
+)
+print(out)
+```
+
+Output:
+
+```text
+python: 59.0
+shape: (2, 3)
+┌──────┬──────────┬──────┐
+│ x    ┆ floordiv ┆ op   │
+│ ---  ┆ ---      ┆ ---  │
+│ f64  ┆ f64      ┆ f64  │
+╞══════╪══════════╪══════╡
+│ 6.0  ┆ 60.0     ┆ 60.0 │
+│ 6.03 ┆ 60.0     ┆ 60.0 │
+└──────┴──────────┴──────┘
+```
+
+## forward_fill fills nulls only, not NaN
+
+Applies to: `Expr.forward_fill`
+
+`Expr.forward_fill` is an alias of `.fill_null(strategy="forward")`, so it only fills nulls. A NaN is a real value, not a missing one. Unlike pandas `ffill`, NaN is never filled, and it gets propagated into the nulls that follow it. Convert NaN to null first with `Expr.fill_nan(None)` if both should count as missing.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"v": [1.0, None, float("nan"), None]})
+out = df.select(
+    pl.col("v").forward_fill().alias("ffill"),
+    pl.col("v").fill_nan(None).forward_fill().alias("fixed"),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (4, 2)
+┌───────┬───────┐
+│ ffill ┆ fixed │
+│ ---   ┆ ---   │
+│ f64   ┆ f64   │
+╞═══════╪═══════╡
+│ 1.0   ┆ 1.0   │
+│ 1.0   ┆ 1.0   │
+│ NaN   ┆ 1.0   │
+│ NaN   ┆ 1.0   │
+└───────┴───────┘
+```
+
+## Expr.item errors unless there is exactly one value
+
+Applies to: `Expr.item`
+
+`Expr.item` is not "first value". It raises a `ComputeError` if the expression yields more than one value, and also if it yields zero values. Aggregate first (for example with `Expr.max` or `Expr.first`) or filter down to one row. Pass `allow_empty=True` if an empty input should give null instead of an error.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 2, 3]})
+try:
+    df.select(pl.col("a").item())
+except Exception as e:
+    print(type(e).__name__)
+print(df.select(pl.col("a").max().item()))
+empty = df.filter(pl.col("a") > 5)
+print(empty.select(pl.col("a").item(allow_empty=True)))
+```
+
+Output:
+
+```text
+ComputeError
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 3   │
+└─────┘
+shape: (1, 1)
+┌──────┐
+│ a    │
+│ ---  │
+│ i64  │
+╞══════╡
+│ null │
+└──────┘
+```
+
+## Expr.index_of returns null when the value is missing, and can match null
+
+Applies to: `Expr.index_of`
+
+`Expr.index_of` does not raise like Python's `list.index`, and it does not return `-1`. When the value is not found it returns null, so check the result with `Expr.is_null`. It also matches null itself: `index_of(None)` returns the position of the first null.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, None, 17]})
+out = df.select(
+    pl.col("a").index_of(17).alias("seventeen"),
+    pl.col("a").index_of(None).alias("null"),
+    pl.col("a").index_of(55).alias("missing"),
+    pl.col("a").index_of(55).is_null().alias("not_found"),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (1, 4)
+┌───────────┬──────┬─────────┬───────────┐
+│ seventeen ┆ null ┆ missing ┆ not_found │
+│ ---       ┆ ---  ┆ ---     ┆ ---       │
+│ u32       ┆ u32  ┆ u32     ┆ bool      │
+╞═══════════╪══════╪═════════╪═══════════╡
+│ 2         ┆ 1    ┆ null    ┆ true      │
+└───────────┴──────┴─────────┴───────────┘
+```
+
+## is_close has abs_tol=0.0 by default, so values near zero are never close
+
+Applies to: `Expr.is_close`
+
+`Expr.is_close` mirrors `math.isclose`, not `numpy.isclose`. The defaults are `rel_tol=1e-09` and `abs_tol=0.0`. Comparing against `0.0` is therefore false for any nonzero value, however tiny. Set `abs_tol` explicitly when values can be near zero.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"x": [1e-12, 0.5]})
+out = df.with_columns(
+    pl.col("x").is_close(0.0).alias("default"),
+    pl.col("x").is_close(0.0, abs_tol=1e-9).alias("with_abs_tol"),
+)
+print(out)
+```
+
+Output:
+
+```text
+shape: (2, 3)
+┌────────────┬─────────┬──────────────┐
+│ x          ┆ default ┆ with_abs_tol │
+│ ---        ┆ ---     ┆ ---          │
+│ f64        ┆ bool    ┆ bool         │
+╞════════════╪═════════╪══════════════╡
+│ 1.0000e-12 ┆ false   ┆ true         │
+│ 0.5        ┆ false   ┆ false        │
+└────────────┴─────────┴──────────────┘
+```
+
+## Expr.exclude treats a pattern as a regex only when anchored with ^ and $
+
+Applies to: `Expr.exclude`
+
+`Expr.exclude` accepts regular expressions only if they start with `^` and end with `$`. A pattern like `"a.*"` is taken as a literal column name, so it silently excludes nothing. `Expr.exclude` also only works after a wildcard or regex selection, and you cannot mix names and dtypes in one call. Anchor your regex, or use selectors.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"ab": [1], "ac": [2], "b": [3]})
+print(df.select(pl.all().exclude("a.*")).columns)
+print(df.select(pl.all().exclude("^a.*$")).columns)
+```
+
+Output:
+
+```text
+['ab', 'ac', 'b']
+['b']
+```
+
+## Expr.hist silently drops values outside the given bins
+
+Applies to: `Expr.hist`
+
+`Expr.hist` is unstable. With explicit `bins` edges, values outside the edges are not counted at all, so the counts can sum to less than the row count. In the catalogue example, the first bin is closed on both sides (`[1.0, 2.0]`) and later bins are left-open (`(2.0, 3.0]`). Check that the counts sum to the height. Alternatively, use `bin_count` to get edges that encompass all the data.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1, 3, 8, 8, 2, 1, 3]})
+out = df.select(pl.col("a").hist(bins=[1, 2, 3]))
+print(out)
+print(out.get_column("a").sum(), df.height)
+```
+
+Output:
+
+```text
+shape: (2, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ u32 │
+╞═════╡
+│ 3   │
+│ 2   │
+└─────┘
+5 7
+```
+
 ## NaN and null are different values, and each method only handles one of them
 
 Applies to: `Expr.drop_nans`, `Expr.drop_nulls`, `Expr.fill_nan`
@@ -451,6 +864,191 @@ Output:
 [1, 2]
 ```
 
+## Expr.mode can return several rows and its order is not guaranteed
+
+Applies to: `Expr.mode`
+
+Unlike a scalar aggregation, `Expr.mode` returns *every* value tied for most frequent, so the result can have more than one row. Inside `DataFrame.group_by` it produces a list, not a scalar. With the default `maintain_order=False`, the order of the tied values is not defined, so `mode().first()` can pick a different value from run to run. Sort the result first, or pass `maintain_order=True`, before reducing it to one value.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"g": ["a", "a", "a", "a"], "x": [1, 1, 2, 2]})
+
+# Two values tie, so mode returns two rows
+modes = df.select(pl.col("x").mode().sort())
+print(modes)
+print(modes.height)
+
+# Deterministic single value per group: sort before taking first
+print(df.group_by("g").agg(pl.col("x").mode().sort().first()))
+```
+
+Output:
+
+```text
+shape: (2, 1)
+┌─────┐
+│ x   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 1   │
+│ 2   │
+└─────┘
+2
+shape: (1, 2)
+┌─────┬─────┐
+│ g   ┆ x   │
+│ --- ┆ --- │
+│ str ┆ i64 │
+╞═════╪═════╡
+│ a   ┆ 1   │
+└─────┴─────┘
+```
+
+## Expr.shift ignores groups unless you add .over
+
+Applies to: `Expr.shift`, `Expr.over`
+
+pandas users expect a lag to restart in each group. `Expr.shift` works on the whole column, so values leak from the previous group into the first row of the next one. Wrap it as `pl.col(...).shift().over("group")` to get a per-group LAG.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"g": ["a", "a", "b", "b"], "v": [1, 2, 10, 20]})
+out = df.with_columns(
+    wrong=pl.col("v").shift(),
+    right=pl.col("v").shift().over("g"),
+)
+# 'wrong' row 3 holds 2 from group a; 'right' is null there
+print(out)
+```
+
+Output:
+
+```text
+shape: (4, 4)
+┌─────┬─────┬───────┬───────┐
+│ g   ┆ v   ┆ wrong ┆ right │
+│ --- ┆ --- ┆ ---   ┆ ---   │
+│ str ┆ i64 ┆ i64   ┆ i64   │
+╞═════╪═════╪═══════╪═══════╡
+│ a   ┆ 1   ┆ null  ┆ null  │
+│ a   ┆ 2   ┆ 1     ┆ 1     │
+│ b   ┆ 10  ┆ 2     ┆ null  │
+│ b   ┆ 20  ┆ 10    ┆ 10    │
+└─────┴─────┴───────┴───────┘
+```
+
+## Order-dependent window expressions follow frame order unless order_by is given
+
+Applies to: `Expr.over`, `Expr.cum_sum`
+
+In `Expr.over`, order-dependent expressions such as `Expr.cum_sum` run in the current row order of the frame, not in time order. SQL users expect an ORDER BY inside the window. On unsorted data the running totals are silently wrong. Pass `order_by=` to `Expr.over`; the results still map back to the original row positions.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"g": ["a", "a", "a"], "t": [3, 1, 2], "v": [30, 10, 20]})
+out = df.with_columns(
+    frame_order=pl.col("v").cum_sum().over("g"),
+    by_time=pl.col("v").cum_sum().over("g", order_by="t"),
+)
+# by_time: t=1 -> 10, t=2 -> 30, t=3 -> 60
+print(out)
+```
+
+Output:
+
+```text
+shape: (3, 5)
+┌─────┬─────┬─────┬─────────────┬─────────┐
+│ g   ┆ t   ┆ v   ┆ frame_order ┆ by_time │
+│ --- ┆ --- ┆ --- ┆ ---         ┆ ---     │
+│ str ┆ i64 ┆ i64 ┆ i64         ┆ i64     │
+╞═════╪═════╪═════╪═════════════╪═════════╡
+│ a   ┆ 3   ┆ 30  ┆ 30          ┆ 60      │
+│ a   ┆ 1   ┆ 10  ┆ 40          ┆ 10      │
+│ a   ┆ 2   ┆ 20  ┆ 60          ┆ 30      │
+└─────┴─────┴─────┴─────────────┴─────────┘
+```
+
+## Expr.set_sorted on unsorted data can give wrong answers
+
+Applies to: `Expr.set_sorted`
+
+`Expr.set_sorted` does not sort anything and does not check the data. It only sets a flag that lets later operations such as `Expr.max` take sorted fast paths. If the data is not actually sorted, those operations can silently return incorrect results. Use `Expr.sort` when you need sorted data, and use `Expr.set_sorted` only when you know the order is already correct.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"v": [3, 1, 2]})
+out = df.select(
+    flagged=pl.col("v").set_sorted().max(),
+    honest=pl.col("v").max(),
+    sorted_then_flag=pl.col("v").sort().set_sorted().max(),
+)
+# 'flagged' may not equal the true max of 3
+print(out)
+```
+
+Output:
+
+```text
+shape: (1, 3)
+┌─────────┬────────┬──────────────────┐
+│ flagged ┆ honest ┆ sorted_then_flag │
+│ ---     ┆ ---    ┆ ---              │
+│ i64     ┆ i64    ┆ i64              │
+╞═════════╪════════╪══════════════════╡
+│ 2       ┆ 3      ┆ 3                │
+└─────────┴────────┴──────────────────┘
+```
+
+## Expr.shuffle shuffles one column independently and breaks rows
+
+Applies to: `Expr.shuffle`, `DataFrame.sample`
+
+`Expr.shuffle` reorders only the expression it is applied to. Using it inside `DataFrame.with_columns` scrambles the pairing between that column and the others, which silently corrupts records. To shuffle whole rows, use `DataFrame.sample(fraction=1.0, shuffle=True, seed=...)`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"id": [1, 2, 3], "name": ["x", "y", "z"]})
+
+# Wrong: ids no longer match their names
+print(df.with_columns(pl.col("id").shuffle(seed=1)))
+
+# Right: rows stay intact, only their order changes
+print(df.sample(fraction=1.0, shuffle=True, seed=1))
+```
+
+Output:
+
+```text
+shape: (3, 2)
+┌─────┬──────┐
+│ id  ┆ name │
+│ --- ┆ ---  │
+│ i64 ┆ str  │
+╞═════╪══════╡
+│ 2   ┆ x    │
+│ 3   ┆ y    │
+│ 1   ┆ z    │
+└─────┴──────┘
+shape: (3, 2)
+┌─────┬──────┐
+│ id  ┆ name │
+│ --- ┆ ---  │
+│ i64 ┆ str  │
+╞═════╪══════╡
+│ 2   ┆ y    │
+│ 3   ┆ z    │
+│ 1   ┆ x    │
+└─────┴──────┘
+```
+
 ## Null and NaN are different missing values
 
 Applies to: `Expr.fill_null`, `Expr.is_null`, `Expr.is_not_null`, `Expr.is_nan`, `Expr.is_not_nan`, `Expr.interpolate`
@@ -626,6 +1224,108 @@ Output:
 
 ```text
 {'a': [1, 1, 2, 1], 'is_duplicated': [True, True, False, True], 'is_unique': [False, False, True, False], 'dup_keep_first': [False, True, False, True], 'dup_keep_last': [True, True, False, False]}
+```
+
+## Division by zero yields inf/NaN, not null or an error
+
+Applies to: `Expr.truediv`
+
+`Expr.truediv` (and the `/` operator) follows IEEE-754. `n/0` gives `±inf` and `0/0` gives `NaN`. It does not return null as SQL `NULLIF` code expects, and it does not raise. Because `NaN` is not null, a later `Expr.fill_null` or `Expr.is_null` misses these rows, and they silently poison sums and means. Integer inputs also come back as `Float64`. Guard the denominator explicitly with `pl.when(...).then(None).otherwise(...)`, or clean up afterwards with `Expr.fill_nan` and `Expr.is_infinite`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"x": [1, 0, 4], "y": [0, 0, 2]})
+out = df.with_columns(
+    naive=pl.col("x").truediv(pl.col("y")),
+    safe=pl.when(pl.col("y") == 0)
+    .then(None)
+    .otherwise(pl.col("x").truediv(pl.col("y"))),
+)
+print(out)
+print(out.select(
+    pl.col("naive").is_null().sum().alias("naive_nulls"),
+    pl.col("naive").fill_null(0).sum().alias("naive_sum_after_fill_null"),
+    pl.col("safe").is_null().sum().alias("safe_nulls"),
+    pl.col("safe").fill_null(0).sum().alias("safe_sum"),
+))
+```
+
+Output:
+
+```text
+shape: (3, 4)
+┌─────┬─────┬───────┬──────┐
+│ x   ┆ y   ┆ naive ┆ safe │
+│ --- ┆ --- ┆ ---   ┆ ---  │
+│ i64 ┆ i64 ┆ f64   ┆ f64  │
+╞═════╪═════╪═══════╪══════╡
+│ 1   ┆ 0   ┆ inf   ┆ null │
+│ 0   ┆ 0   ┆ NaN   ┆ null │
+│ 4   ┆ 2   ┆ 2.0   ┆ 2.0  │
+└─────┴─────┴───────┴──────┘
+shape: (1, 4)
+┌─────────────┬───────────────────────────┬────────────┬──────────┐
+│ naive_nulls ┆ naive_sum_after_fill_null ┆ safe_nulls ┆ safe_sum │
+│ ---         ┆ ---                       ┆ ---        ┆ ---      │
+│ u32         ┆ f64                       ┆ u32        ┆ f64      │
+╞═════════════╪═══════════════════════════╪════════════╪══════════╡
+│ 0           ┆ NaN                       ┆ 2          ┆ 2.0      │
+└─────────────┴───────────────────────────┴────────────┴──────────┘
+```
+
+## Expr.slice takes (offset, length), not (start, end)
+
+Applies to: `Expr.slice`
+
+`Expr.slice(offset, length)` uses a length as its second argument, not an exclusive end index like Python `[1:3]` or pandas `iloc[1:3]`. Writing `slice(1, 3)` while expecting rows 1 and 2 returns three rows instead. If you think in start/end terms, pass `end - start` as the length. Leaving `length=None` takes everything from `offset` onward.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [10, 20, 30, 40, 50]})
+# Python-style intent: rows [1:3] -> 20, 30
+wrong = df.select(pl.col("a").slice(1, 3))
+start, end = 1, 3
+right = df.select(pl.col("a").slice(start, end - start))
+print(wrong["a"].to_list())
+print(right["a"].to_list())
+```
+
+Output:
+
+```text
+[20, 30, 40]
+[20, 30]
+```
+
+## Expr.std defaults to sample std (ddof=1), not population std
+
+Applies to: `Expr.std`
+
+`Expr.std` divides by `N - ddof` with `ddof=1` by default, which gives the sample standard deviation. Code ported from NumPy (where `np.std` defaults to population, ddof=0), or written with a population formula in mind, will silently get a larger value. Pass `ddof=0` explicitly when you need the population standard deviation.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": [1.0, 2.0, 3.0, 4.0]})
+print(df.select(
+    pl.col("a").std().alias("default_ddof1"),
+    pl.col("a").std(ddof=0).alias("population_ddof0"),
+))
+```
+
+Output:
+
+```text
+shape: (1, 2)
+┌───────────────┬──────────────────┐
+│ default_ddof1 ┆ population_ddof0 │
+│ ---           ┆ ---              │
+│ f64           ┆ f64              │
+╞═══════════════╪══════════════════╡
+│ 1.290994      ┆ 1.118034         │
+└───────────────┴──────────────────┘
 ```
 
 ## Expr.max and Expr.min silently skip NaN; use Expr.nan_max / Expr.nan_min to propagate it

@@ -415,3 +415,322 @@ Output:
 ['gonfruit', 'i', 'lo', None]
 ['ruit', 'kiwi', '\xe9llo', None]
 ```
+
+## Use to_lowercase, to_uppercase and to_titlecase instead of the pandas names lower, upper and title
+
+Applies to: `Expr.str.to_lowercase`, `Expr.str.to_uppercase`, `Expr.str.to_titlecase`, `Expr.str.starts_with`, `Expr.str.ends_with`
+
+pandas habits such as `.str.lower()`, `.str.upper()`, `.str.title()` and `.str.startswith()` do not exist in Polars. They raise `AttributeError` as soon as the attribute is accessed. Use `Expr.str.to_lowercase`, `Expr.str.to_uppercase`, `Expr.str.to_titlecase`, `Expr.str.starts_with` and `Expr.str.ends_with`. A null input gives a null output in all of these; it is not coerced to `False`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": ["hello world", "CAT", None]})
+try:
+    df.select(pl.col("a").str.lower())
+except AttributeError as e:
+    print(type(e).__name__)
+print(
+    df.select(
+        lower=pl.col("a").str.to_lowercase(),
+        title=pl.col("a").str.to_titlecase(),
+        starts=pl.col("a").str.starts_with("he"),
+    )
+)
+```
+
+Output:
+
+```text
+AttributeError
+shape: (3, 3)
+┌─────────────┬─────────────┬────────┐
+│ lower       ┆ title       ┆ starts │
+│ ---         ┆ ---         ┆ ---    │
+│ str         ┆ str         ┆ bool   │
+╞═════════════╪═════════════╪════════╡
+│ hello world ┆ Hello World ┆ true   │
+│ cat         ┆ Cat         ┆ false  │
+│ null        ┆ null        ┆ null   │
+└─────────────┴─────────────┴────────┘
+```
+
+## count_matches treats the pattern as a regex unless literal=True
+
+Applies to: `Expr.str.count_matches`
+
+`Expr.str.count_matches` interprets `pattern` as a regular expression by default. Counting `"."` therefore counts every character, not the dots. Pass `literal=True` to count a plain substring. A null input gives null, not 0.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"s": ["a.b.c", "abc", None]})
+print(
+    df.with_columns(
+        regex=pl.col("s").str.count_matches("."),
+        literal=pl.col("s").str.count_matches(".", literal=True),
+    )
+)
+```
+
+Output:
+
+```text
+shape: (3, 3)
+┌───────┬───────┬─────────┐
+│ s     ┆ regex ┆ literal │
+│ ---   ┆ ---   ┆ ---     │
+│ str   ┆ u32   ┆ u32     │
+╞═══════╪═══════╪═════════╡
+│ a.b.c ┆ 5     ┆ 2       │
+│ abc   ┆ 3     ┆ 0       │
+│ null  ┆ null  ┆ null    │
+└───────┴───────┴─────────┘
+```
+
+## contains_any, replace_many and extract_many match literal strings, never regex
+
+Applies to: `Expr.str.contains_any`, `Expr.str.replace_many`, `Expr.str.extract_many`, `Expr.str.find_many`
+
+The Aho-Corasick methods `Expr.str.contains_any`, `Expr.str.replace_many`, `Expr.str.extract_many` and `Expr.str.find_many` only match string literals. A pattern like `r"\d"` searches for a backslash followed by `d`, not for a digit. These calls raise no error, so the result is silently wrong. Use `Expr.str.contains`, `Expr.str.extract_all` or `Expr.str.replace_all` when you need regex semantics.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"s": ["a1", "b\\d"]})
+print(
+    df.with_columns(
+        any_literal=pl.col("s").str.contains_any([r"\d"]),
+        regex=pl.col("s").str.contains(r"\d"),
+    )
+)
+```
+
+Output:
+
+```text
+shape: (2, 3)
+┌─────┬─────────────┬───────┐
+│ s   ┆ any_literal ┆ regex │
+│ --- ┆ ---         ┆ ---   │
+│ str ┆ bool        ┆ bool  │
+╞═════╪═════════════╪═══════╡
+│ a1  ┆ false       ┆ true  │
+│ b\d ┆ true        ┆ false │
+└─────┴─────────────┴───────┘
+```
+
+## find_many returns byte offsets, not character positions
+
+Applies to: `Expr.str.find_many`
+
+`Expr.str.find_many` returns a `List<UInt32>` of byte offsets for each match start. With non-ASCII text these offsets are larger than the character index. Do not feed them into character-based slicing such as `Expr.str.slice` and expect the right substring. Compare `Expr.str.len_bytes` with `Expr.str.len_chars` to see the difference.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"s": ["cafe bar", "café bar"]})
+print(
+    df.with_columns(
+        offset=pl.col("s").str.find_many(["bar"]),
+        n_bytes=pl.col("s").str.len_bytes(),
+        n_chars=pl.col("s").str.len_chars(),
+    )
+)
+```
+
+Output:
+
+```text
+shape: (2, 4)
+┌──────────┬───────────┬─────────┬─────────┐
+│ s        ┆ offset    ┆ n_bytes ┆ n_chars │
+│ ---      ┆ ---       ┆ ---     ┆ ---     │
+│ str      ┆ list[u32] ┆ u32     ┆ u32     │
+╞══════════╪═══════════╪═════════╪═════════╡
+│ cafe bar ┆ [5]       ┆ 8       ┆ 8       │
+│ café bar ┆ [6]       ┆ 9       ┆ 8       │
+└──────────┴───────────┴─────────┴─────────┘
+```
+
+## json_decode requires an explicit dtype in 1.38
+
+Applies to: `Expr.str.json_decode`
+
+Since 1.33.0 the `dtype` argument of `Expr.str.json_decode` is mandatory. Older code that calls `.str.json_decode()` and relies on schema inference fails with `TypeError`. The `infer_schema_length` argument is deprecated and ignored. Pass the target type, for example a `pl.Struct` of `pl.Field`s. Invalid JSON raises an error.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"j": ['{"a":1,"b":true}', '{"a":2,"b":false}']})
+try:
+    df.select(pl.col("j").str.json_decode())
+except Exception as e:
+    print(type(e).__name__)
+dtype = pl.Struct([pl.Field("a", pl.Int64), pl.Field("b", pl.Boolean)])
+print(df.select(pl.col("j").str.json_decode(dtype)).unnest("j"))
+```
+
+Output:
+
+```text
+TypeError
+shape: (2, 2)
+┌─────┬───────┐
+│ a   ┆ b     │
+│ --- ┆ ---   │
+│ i64 ┆ bool  │
+╞═════╪═══════╡
+│ 1   ┆ true  │
+│ 2   ┆ false │
+└─────┴───────┘
+```
+
+## json_path_match always returns String, even for numbers and booleans
+
+Applies to: `Expr.str.json_path_match`
+
+`Expr.str.json_path_match` casts every extracted value to `String`, whatever its JSON type. Doing arithmetic or numeric comparisons on the result is wrong: comparisons are lexical, and math fails. Cast explicitly with `Expr.cast`. If you need typed fields, use `Expr.str.json_decode` with a dtype. A missing path or a null input gives null.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"j": ['{"a":10}', '{"a":9}', None]})
+m = df.select(a=pl.col("j").str.json_path_match("$.a"))
+print(m.schema)
+print(m.select(pl.col("a").max()))
+print(m.select(pl.col("a").cast(pl.Int64).max()))
+```
+
+Output:
+
+```text
+Schema({'a': String})
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ str │
+╞═════╡
+│ 9   │
+└─────┘
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ i64 │
+╞═════╡
+│ 10  │
+└─────┘
+```
+
+## extract_groups names unnamed groups "1", "2", ... as strings
+
+Applies to: `Expr.str.extract_groups`, `Expr.str.extract`
+
+`Expr.str.extract_groups` returns a `Struct` whose fields are all `String`. Unnamed capture groups get their position as a string name (`"1"`, `"2"`). Access them with `Expr.struct.field("1")` or use named groups such as `(?<key>...)`. Rows where the pattern does not match give null fields, and `Expr.str.extract` likewise returns null rather than an empty string.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"s": ["k=1", "no match"]})
+out = df.select(g=pl.col("s").str.extract_groups(r"(\w)=(\d)"))
+print(out.unnest("g").columns)
+print(out.select(pl.col("g").struct.field("2")))
+named = df.select(g=pl.col("s").str.extract_groups(r"(?<key>\w)=(?<val>\d)"))
+print(named.unnest("g"))
+```
+
+Output:
+
+```text
+['1', '2']
+shape: (2, 1)
+┌──────┐
+│ 2    │
+│ ---  │
+│ str  │
+╞══════╡
+│ 1    │
+│ null │
+└──────┘
+shape: (2, 2)
+┌──────┬──────┐
+│ key  ┆ val  │
+│ ---  ┆ ---  │
+│ str  ┆ str  │
+╞══════╪══════╡
+│ k    ┆ 1    │
+│ null ┆ null │
+└──────┴──────┘
+```
+
+## Replace deprecated str.explode with str.split("").explode(), noting that empty strings become null
+
+Applies to: `Expr.str.explode`
+
+`Expr.str.explode` is deprecated since 0.20.31. The replacement is `Expr.str.split` with `""` followed by `Expr.explode`. The behaviour differs: an empty string now yields a null row instead of being preserved. If you need the old behaviour, handle empty lists with `pl.when` before exploding.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"a": ["ab", ""]})
+out = df.select(pl.col("a").str.split("").explode())
+print(out)
+print(out.null_count())
+```
+
+Output:
+
+```text
+shape: (3, 1)
+┌──────┐
+│ a    │
+│ ---  │
+│ str  │
+╞══════╡
+│ a    │
+│ b    │
+│ null │
+└──────┘
+shape: (1, 1)
+┌─────┐
+│ a   │
+│ --- │
+│ u32 │
+╞═════╡
+│ 1   │
+└─────┘
+```
+
+## decode raises on invalid input unless strict=False
+
+Applies to: `Expr.str.decode`
+
+`Expr.str.decode` defaults to `strict=True`, so one malformed hex or base64 value fails the whole query. Pass `strict=False` to turn undecodable values into null. The result dtype is `Binary`, not `String`.
+
+```python
+import polars as pl
+
+df = pl.DataFrame({"h": ["ff00", "zz"]})
+try:
+    df.select(pl.col("h").str.decode("hex"))
+except Exception as e:
+    print(type(e).__name__)
+print(df.select(pl.col("h").str.decode("hex", strict=False)))
+```
+
+Output:
+
+```text
+ComputeError
+shape: (2, 1)
+┌─────────────┐
+│ h           │
+│ ---         │
+│ binary      │
+╞═════════════╡
+│ b"\xff\x00" │
+│ null        │
+└─────────────┘
+```

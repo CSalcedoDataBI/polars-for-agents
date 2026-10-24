@@ -1,0 +1,79 @@
+{
+ "chunk": "functions-1-pass2",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "pl.concat_list returns null for the whole row if any input is null, and upcasts to a supertype",
+   "applies_to": [
+    "pl.concat_list"
+   ],
+   "trap": "`pl.concat_list` propagates nulls. If any input list in a row is null, the whole concatenated list for that row is null, not the other lists joined together. The output dtype is also the supertype of all inputs, so mixing an integer list with a string literal turns every element into a string. Handle null inputs explicitly, for example with `pl.when` on `Expr.is_null`, and cast inputs to a common dtype yourself.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2], [3]], \"b\": [[4], None]})\nout = df.with_columns(\n    naive=pl.concat_list(\"a\", \"b\"),\n    safe=pl.when(pl.col(\"b\").is_null())\n    .then(pl.col(\"a\"))\n    .otherwise(pl.concat_list(\"a\", \"b\")),\n)\nprint(out)\nprint(df.select(pl.concat_list(\"a\", pl.lit(\"x\"))).dtypes)\n",
+   "output": "shape: (2, 4)\n┌───────────┬───────────┬───────────┬───────────┐\n│ a         ┆ b         ┆ naive     ┆ safe      │\n│ ---       ┆ ---       ┆ ---       ┆ ---       │\n│ list[i64] ┆ list[i64] ┆ list[i64] ┆ list[i64] │\n╞═══════════╪═══════════╪═══════════╪═══════════╡\n│ [1, 2]    ┆ [4]       ┆ [1, 2, 4] ┆ [1, 2, 4] │\n│ [3]       ┆ null      ┆ null      ┆ [3]       │\n└───────────┴───────────┴───────────┴───────────┘\n[List(String)]"
+  },
+  {
+   "title": "pl.cum_count counts non-null values, not rows",
+   "applies_to": [
+    "pl.cum_count"
+   ],
+   "trap": "pandas `cumcount` numbers rows, but `pl.cum_count` is the cumulative count of non-null values. On a null the counter does not advance, so it repeats the previous number. To get a running row number, use `pl.int_range` over `pl.len()` instead.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 3, None]})\nout = df.with_columns(\n    cc=pl.cum_count(\"a\"),\n    row_no=pl.int_range(1, pl.len() + 1),\n)\nprint(out)\n",
+   "output": "shape: (4, 3)\n┌──────┬─────┬────────┐\n│ a    ┆ cc  ┆ row_no │\n│ ---  ┆ --- ┆ ---    │\n│ i64  ┆ u32 ┆ i64    │\n╞══════╪═════╪════════╡\n│ 1    ┆ 1   ┆ 1      │\n│ null ┆ 1   ┆ 2      │\n│ 3    ┆ 2   ┆ 3      │\n│ null ┆ 2   ┆ 4      │\n└──────┴─────┴────────┘"
+  },
+  {
+   "title": "String arguments to pl.format are column names, not literal text",
+   "applies_to": [
+    "pl.format"
+   ],
+   "trap": "In `pl.format`, each positional argument after the template fills a `{}` placeholder, and plain strings are parsed as column names. Passing a word you meant as literal text fails because no column has that name. Wrap literal text in `pl.lit`, or put it directly into the template string.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [\"x\", \"y\"], \"b\": [1, 2]})\ntry:\n    df.select(pl.format(\"{}-{}\", \"a\", \"units\"))\nexcept Exception as e:\n    print(type(e).__name__)\nprint(df.select(pl.format(\"{}-{}\", \"a\", pl.lit(\"units\")).alias(\"fmt\")))\nprint(df.select(pl.format(\"{}_{}\", \"a\", \"b\").alias(\"fmt\")))\n",
+   "output": "ColumnNotFoundError\nshape: (2, 1)\n┌─────────┐\n│ fmt     │\n│ ---     │\n│ str     │\n╞═════════╡\n│ x-units │\n│ y-units │\n└─────────┘\nshape: (2, 1)\n┌─────┐\n│ fmt │\n│ --- │\n│ str │\n╞═════╡\n│ x_1 │\n│ y_2 │\n└─────┘"
+  },
+  {
+   "title": "pl.fold result dtype follows the accumulator, so pl.lit(0) gives Int32",
+   "applies_to": [
+    "pl.fold",
+    "pl.cum_fold"
+   ],
+   "trap": "When `return_dtype` is not set, `pl.fold` and `pl.cum_fold` infer the output dtype from the accumulator. A bare `pl.lit(0)` or `pl.lit(1)` is Int32, so a horizontal sum of Int64 columns comes back as Int32. Give the accumulator an explicit dtype with `pl.lit(0, dtype=pl.Int64)`, or pass `return_dtype`. For plain horizontal sums, prefer `pl.sum_horizontal`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4]})\nout = df.select(\n    i32=pl.fold(acc=pl.lit(0), function=lambda acc, x: acc + x, exprs=pl.all()),\n    i64=pl.fold(\n        acc=pl.lit(0, dtype=pl.Int64), function=lambda acc, x: acc + x, exprs=pl.all()\n    ),\n    builtin=pl.sum_horizontal(\"a\", \"b\"),\n)\nprint(out.schema)\nprint(out)\n",
+   "output": "Schema({'i32': Int32, 'i64': Int64, 'builtin': Int64})\nshape: (2, 3)\n┌─────┬─────┬─────────┐\n│ i32 ┆ i64 ┆ builtin │\n│ --- ┆ --- ┆ ---     │\n│ i32 ┆ i64 ┆ i64     │\n╞═════╪═════╪═════════╡\n│ 4   ┆ 4   ┆ 4       │\n│ 6   ┆ 6   ┆ 6       │\n└─────┴─────┴─────────┘"
+  },
+  {
+   "title": "pl.from_dict is strict by default; strict=False turns uncastable values into null",
+   "applies_to": [
+    "pl.from_dict"
+   ],
+   "trap": "With the default `strict=True`, `pl.from_dict` raises if any value does not exactly match the given or inferred column dtype. Setting `strict=False` does not keep the odd values. They are cast to the column dtype, or silently set to null when casting is impossible. If you use `strict=False`, check `DataFrame.null_count` afterwards so lost data does not go unnoticed.",
+   "example": "import polars as pl\n\ndata = {\"a\": [1, \"x\", 3]}\ntry:\n    pl.from_dict(data, schema={\"a\": pl.Int64})\nexcept Exception as e:\n    print(type(e).__name__)\ndf = pl.from_dict(data, schema={\"a\": pl.Int64}, strict=False)\nprint(df)\nprint(df.null_count())\n",
+   "output": "TypeError\nshape: (3, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ i64  │\n╞══════╡\n│ 1    │\n│ null │\n│ 3    │\n└──────┘\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ u32 │\n╞═════╡\n│ 1   │\n└─────┘"
+  },
+  {
+   "title": "pl.arctan2d is deprecated; use pl.arctan2 then Expr.degrees",
+   "applies_to": [
+    "pl.arctan2d",
+    "pl.arctan2"
+   ],
+   "trap": "`pl.arctan2d` has been deprecated since 1.0.0 and emits a deprecation warning. `pl.arctan2` returns radians, so do not mix the two up. For degrees, chain `pl.arctan2(...)` with `Expr.degrees`. Note that the argument order is `(y, x)`.",
+   "example": "import polars as pl\n\nc = (2**0.5) / 2\ndf = pl.DataFrame({\"y\": [c, -c], \"x\": [c, -c]})\nout = df.select(\n    radians=pl.arctan2(\"y\", \"x\"),\n    degrees=pl.arctan2(\"y\", \"x\").degrees(),\n)\nprint(out)\n",
+   "output": "shape: (2, 2)\n┌───────────┬─────────┐\n│ radians   ┆ degrees │\n│ ---       ┆ ---     │\n│ f64       ┆ f64     │\n╞═══════════╪═════════╡\n│ 0.785398  ┆ 45.0    │\n│ -2.356194 ┆ -135.0  │\n└───────────┴─────────┘"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "pl.exclude treats a pattern as a regex only when it is wrapped in ^...$",
+    "applies_to": [
+     "pl.exclude"
+    ],
+    "trap": "`pl.exclude` accepts regular expressions, but only when they start with `^` and end with `$`. A pattern such as `.*a` is taken as a literal column name, so it does not remove the columns you meant to drop. Anchor the pattern as `^.*a$`.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"aa\": [1], \"ba\": [\"x\"], \"cc\": [2.5]})\ntry:\n    print(df.select(pl.exclude(\".*a\")).columns)\nexcept Exception as e:\n    print(type(e).__name__)\nprint(df.select(pl.exclude(\"^.*a$\")).columns)\n",
+    "output": "['aa', 'ba', 'cc']\n['cc']"
+   },
+   "problems": [
+    "example catches and prints an exception type, but the run shows none: the trap's error claim is not demonstrated"
+   ]
+  }
+ ]
+}

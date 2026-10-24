@@ -1,0 +1,26 @@
+{
+ "chunk": "Series-4-pass2",
+ "group": "Series",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Series.to_dummies adds a null indicator column unless drop_nulls=True",
+   "applies_to": [
+    "Series.to_dummies"
+   ],
+   "trap": "If the Series contains nulls, `Series.to_dummies` creates an extra indicator column for the null values by default. A model matrix built this way gets an unexpected feature column. Pass `drop_nulls=True` to skip that column, so null rows become all-zero vectors. `drop_first=True` drops the first category, not the null column. The indicator columns are `UInt8`, not boolean.",
+   "example": "import polars as pl\n\ns = pl.Series(\"a\", [1, 2, None, 3])\n\ndefault = s.to_dummies()\nprint(default.columns)\n\nclean = s.to_dummies(drop_nulls=True)\nprint(clean.columns)\nprint(clean.dtypes)\nprint(clean.row(2))",
+   "output": "['a_1', 'a_2', 'a_3', 'a_null']\n['a_1', 'a_2', 'a_3']\n[UInt8, UInt8, UInt8]\n(0, 0, 0)"
+  },
+  {
+   "title": "Series.upper_bound returns the dtype's limit, not the data maximum",
+   "applies_to": [
+    "Series.upper_bound"
+   ],
+   "trap": "`Series.upper_bound` ignores the values in the Series. It returns the largest value representable by the Series' dtype as a one-element Series. For example, it gives 127 for `Int8` and `inf` for `Float64`, not the largest finite float. Use `Series.max` for the largest value actually present. When you use `Series.upper_bound` as a sentinel, remember that it is infinite for float dtypes.",
+   "example": "import polars as pl\n\ns_int = pl.Series(\"s\", [-1, 0, 1], dtype=pl.Int8)\nprint(s_int.max(), s_int.upper_bound().item())\n\ns_float = pl.Series(\"s\", [1.0, 2.5, 3.0], dtype=pl.Float64)\nprint(s_float.max(), s_float.upper_bound().item())",
+   "output": "1 127\n3.0 inf"
+  }
+ ],
+ "failed": []
+}

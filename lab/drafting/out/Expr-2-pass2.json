@@ -1,0 +1,86 @@
+{
+ "chunk": "Expr-2-pass2",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Float floordiv does not match Python's // operator",
+   "applies_to": [
+    "Expr.floordiv"
+   ],
+   "trap": "`Expr.floordiv` (and `//` on expressions) first does the float division and then floors the result. Python's `//` floors the exact quotient instead. So `6.0 // 0.1` is `59.0` in Python but `60.0` in Polars. Do not port Python or NumPy floor-division results and expect identical values on floats. If you need the exact-quotient semantics, compute it outside Polars or use integer-scaled data.",
+   "example": "import polars as pl\n\nprint('python:', 6.0 // 0.1)\ndf = pl.DataFrame({\"x\": [6.0, 6.03]})\nout = df.with_columns(\n    pl.col(\"x\").floordiv(0.1).alias(\"floordiv\"),\n    (pl.col(\"x\") // 0.1).alias(\"op\"),\n)\nprint(out)\n",
+   "output": "python: 59.0\nshape: (2, 3)\n┌──────┬──────────┬──────┐\n│ x    ┆ floordiv ┆ op   │\n│ ---  ┆ ---      ┆ ---  │\n│ f64  ┆ f64      ┆ f64  │\n╞══════╪══════════╪══════╡\n│ 6.0  ┆ 60.0     ┆ 60.0 │\n│ 6.03 ┆ 60.0     ┆ 60.0 │\n└──────┴──────────┴──────┘"
+  },
+  {
+   "title": "forward_fill fills nulls only, not NaN",
+   "applies_to": [
+    "Expr.forward_fill"
+   ],
+   "trap": "`Expr.forward_fill` is an alias of `.fill_null(strategy=\"forward\")`, so it only fills nulls. A NaN is a real value, not a missing one. Unlike pandas `ffill`, NaN is never filled, and it gets propagated into the nulls that follow it. Convert NaN to null first with `Expr.fill_nan(None)` if both should count as missing.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"v\": [1.0, None, float(\"nan\"), None]})\nout = df.select(\n    pl.col(\"v\").forward_fill().alias(\"ffill\"),\n    pl.col(\"v\").fill_nan(None).forward_fill().alias(\"fixed\"),\n)\nprint(out)\n",
+   "output": "shape: (4, 2)\n┌───────┬───────┐\n│ ffill ┆ fixed │\n│ ---   ┆ ---   │\n│ f64   ┆ f64   │\n╞═══════╪═══════╡\n│ 1.0   ┆ 1.0   │\n│ 1.0   ┆ 1.0   │\n│ NaN   ┆ 1.0   │\n│ NaN   ┆ 1.0   │\n└───────┴───────┘"
+  },
+  {
+   "title": "Expr.item errors unless there is exactly one value",
+   "applies_to": [
+    "Expr.item"
+   ],
+   "trap": "`Expr.item` is not \"first value\". It raises a `ComputeError` if the expression yields more than one value, and also if it yields zero values. Aggregate first (for example with `Expr.max` or `Expr.first`) or filter down to one row. Pass `allow_empty=True` if an empty input should give null instead of an error.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3]})\ntry:\n    df.select(pl.col(\"a\").item())\nexcept Exception as e:\n    print(type(e).__name__)\nprint(df.select(pl.col(\"a\").max().item()))\nempty = df.filter(pl.col(\"a\") > 5)\nprint(empty.select(pl.col(\"a\").item(allow_empty=True)))\n",
+   "output": "ComputeError\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 3   │\n└─────┘\nshape: (1, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ i64  │\n╞══════╡\n│ null │\n└──────┘"
+  },
+  {
+   "title": "Expr.index_of returns null when the value is missing, and can match null",
+   "applies_to": [
+    "Expr.index_of"
+   ],
+   "trap": "`Expr.index_of` does not raise like Python's `list.index`, and it does not return `-1`. When the value is not found it returns null, so check the result with `Expr.is_null`. It also matches null itself: `index_of(None)` returns the position of the first null.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 17]})\nout = df.select(\n    pl.col(\"a\").index_of(17).alias(\"seventeen\"),\n    pl.col(\"a\").index_of(None).alias(\"null\"),\n    pl.col(\"a\").index_of(55).alias(\"missing\"),\n    pl.col(\"a\").index_of(55).is_null().alias(\"not_found\"),\n)\nprint(out)\n",
+   "output": "shape: (1, 4)\n┌───────────┬──────┬─────────┬───────────┐\n│ seventeen ┆ null ┆ missing ┆ not_found │\n│ ---       ┆ ---  ┆ ---     ┆ ---       │\n│ u32       ┆ u32  ┆ u32     ┆ bool      │\n╞═══════════╪══════╪═════════╪═══════════╡\n│ 2         ┆ 1    ┆ null    ┆ true      │\n└───────────┴──────┴─────────┴───────────┘"
+  },
+  {
+   "title": "is_close has abs_tol=0.0 by default, so values near zero are never close",
+   "applies_to": [
+    "Expr.is_close"
+   ],
+   "trap": "`Expr.is_close` mirrors `math.isclose`, not `numpy.isclose`. The defaults are `rel_tol=1e-09` and `abs_tol=0.0`. Comparing against `0.0` is therefore false for any nonzero value, however tiny. Set `abs_tol` explicitly when values can be near zero.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1e-12, 0.5]})\nout = df.with_columns(\n    pl.col(\"x\").is_close(0.0).alias(\"default\"),\n    pl.col(\"x\").is_close(0.0, abs_tol=1e-9).alias(\"with_abs_tol\"),\n)\nprint(out)\n",
+   "output": "shape: (2, 3)\n┌────────────┬─────────┬──────────────┐\n│ x          ┆ default ┆ with_abs_tol │\n│ ---        ┆ ---     ┆ ---          │\n│ f64        ┆ bool    ┆ bool         │\n╞════════════╪═════════╪══════════════╡\n│ 1.0000e-12 ┆ false   ┆ true         │\n│ 0.5        ┆ false   ┆ false        │\n└────────────┴─────────┴──────────────┘"
+  },
+  {
+   "title": "Expr.exclude treats a pattern as a regex only when anchored with ^ and $",
+   "applies_to": [
+    "Expr.exclude"
+   ],
+   "trap": "`Expr.exclude` accepts regular expressions only if they start with `^` and end with `$`. A pattern like `\"a.*\"` is taken as a literal column name, so it silently excludes nothing. `Expr.exclude` also only works after a wildcard or regex selection, and you cannot mix names and dtypes in one call. Anchor your regex, or use selectors.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"ab\": [1], \"ac\": [2], \"b\": [3]})\nprint(df.select(pl.all().exclude(\"a.*\")).columns)\nprint(df.select(pl.all().exclude(\"^a.*$\")).columns)\n",
+   "output": "['ab', 'ac', 'b']\n['b']"
+  },
+  {
+   "title": "Expr.hist silently drops values outside the given bins",
+   "applies_to": [
+    "Expr.hist"
+   ],
+   "trap": "`Expr.hist` is unstable. With explicit `bins` edges, values outside the edges are not counted at all, so the counts can sum to less than the row count. In the catalogue example, the first bin is closed on both sides (`[1.0, 2.0]`) and later bins are left-open (`(2.0, 3.0]`). Check that the counts sum to the height. Alternatively, use `bin_count` to get edges that encompass all the data.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 3, 8, 8, 2, 1, 3]})\nout = df.select(pl.col(\"a\").hist(bins=[1, 2, 3]))\nprint(out)\nprint(out.get_column(\"a\").sum(), df.height)\n",
+   "output": "shape: (2, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ u32 │\n╞═════╡\n│ 3   │\n│ 2   │\n└─────┘\n5 7"
+  }
+ ],
+ "failed": [
+  {
+   "note": {
+    "title": "Expr.get raises on out-of-bounds indices unless null_on_oob=True",
+    "applies_to": [
+     "Expr.get"
+    ],
+    "trap": "By default `Expr.get` raises an error when the index is out of bounds (`null_on_oob=False`). In a `DataFrame.group_by` aggregation, a single short group makes the whole query fail. Pass `null_on_oob=True` to get null for groups that are too short.",
+    "example": "import polars as pl\n\ndf = pl.DataFrame({\"g\": [\"a\", \"a\", \"b\"], \"v\": [1, 2, 3]})\ntry:\n    df.group_by(\"g\", maintain_order=True).agg(pl.col(\"v\").get(1))\nexcept Exception as e:\n    print(type(e).__name__)\nout = df.group_by(\"g\", maintain_order=True).agg(\n    pl.col(\"v\").get(1, null_on_oob=True)\n)\nprint(out)\n",
+    "output": "shape: (2, 2)\n┌─────┬──────┐\n│ g   ┆ v    │\n│ --- ┆ ---  │\n│ str ┆ i64  │\n╞═════╪══════╡\n│ a   ┆ 2    │\n│ b   ┆ null │\n└─────┴──────┘"
+   },
+   "problems": [
+    "example catches and prints an exception type, but the run shows none: the trap's error claim is not demonstrated"
+   ]
+  }
+ ]
+}

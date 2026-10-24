@@ -1,0 +1,81 @@
+{
+ "chunk": "DataFrame-1-pass2",
+ "group": "DataFrame",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "DataFrame.count counts non-null values per column, not rows",
+   "applies_to": [
+    "DataFrame.count",
+    "DataFrame.height"
+   ],
+   "trap": "Coming from SQL `COUNT(*)`, agents call `DataFrame.count` to get the number of rows. It actually returns a one-row DataFrame with the number of **non-null** values in each column, so columns that contain nulls report less than the row count. For the row count use `DataFrame.height`, or `df.select(pl.len()).item()`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, None, 3], \"b\": [None, None, 6]})\n\n# Wrong: this is a per-column non-null count, not a row count\nprint(df.count())\n\n# Right: number of rows\nprint(df.height)\nprint(df.select(pl.len()).item())\n",
+   "output": "shape: (1, 2)\n┌─────┬─────┐\n│ a   ┆ b   │\n│ --- ┆ --- │\n│ u32 ┆ u32 │\n╞═════╪═════╡\n│ 2   ┆ 1   │\n└─────┴─────┘\n3\n3"
+  },
+  {
+   "title": "DataFrame.item without arguments requires a 1x1 frame",
+   "applies_to": [
+    "DataFrame.item"
+   ],
+   "trap": "`DataFrame.item()` with no arguments is `df[0, 0]` plus a check that the shape is (1, 1). It raises on any larger frame instead of returning the first value. Reduce to a single value first, for example `df.select(pl.col(\"a\").sum()).item()`. To read one cell, pass both `row` and `column`, as in `df.item(1, \"a\")`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2, 3], \"b\": [4, 5, 6]})\n\ntry:\n    df.item()\nexcept Exception as e:\n    print(type(e).__name__)\n\n# Right: aggregate to 1x1 first, or address an explicit cell\nprint(df.select(pl.col(\"a\").sum()).item())\nprint(df.item(1, \"b\"))\n",
+   "output": "ValueError\n6\n5"
+  },
+  {
+   "title": "DataFrame.glimpse returns None by default; use return_type to capture it",
+   "applies_to": [
+    "DataFrame.glimpse"
+   ],
+   "trap": "By default `DataFrame.glimpse` prints to stdout and returns `None`, so `summary = df.glimpse()` stores nothing. Pass `return_type=\"string\"` to get the text or `return_type=\"frame\"` to get a DataFrame. `return_type=\"self\"` prints and returns the original frame, which is useful mid-chain. The old boolean `return_as_string` parameter was renamed `return_type` in 1.35.0, so write `return_type` in new code.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1.0, 2.5], \"b\": [\"x\", None]})\n\nres = df.glimpse()\nprint(res is None)\n\ntext = df.glimpse(return_type=\"string\")\nprint(type(text).__name__)\n\nsame = df.glimpse(return_type=\"self\")\nprint(same.shape)\n",
+   "output": "Rows: 2\nColumns: 2\n$ a <f64> 1.0, 2.5\n$ b <str> 'x', null\n\nTrue\nstr\nRows: 2\nColumns: 2\n$ a <f64> 1.0, 2.5\n$ b <str> 'x', null\n\n(2, 2)"
+  },
+  {
+   "title": "Sort the index column before group_by_dynamic, and mind the closed='left' windows",
+   "applies_to": [
+    "DataFrame.group_by_dynamic"
+   ],
+   "trap": "`DataFrame.group_by_dynamic` requires the index column to be sorted ascending, and within each group if `group_by` is passed. Feeding it unordered data is a misuse, so call `DataFrame.sort` on the index first. Windows default to `closed='left'` (`[start, start + period)`), labelled by their left edge, so a point exactly on a boundary falls into the later window. Pandas or SQL users who expect right-closed bins get different sums. Set `closed` and `label` explicitly when boundary semantics matter.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"t\": [4, 0, 2, 1, 3, 5], \"v\": [1, 1, 1, 1, 1, 1]})\ndf = df.sort(\"t\")  # index column must be sorted ascending\n\nleft = df.group_by_dynamic(\"t\", every=\"2i\").agg(pl.col(\"v\").sum())\nright = df.group_by_dynamic(\"t\", every=\"2i\", closed=\"right\").agg(\n    pl.col(\"v\").sum()\n)\nprint(left)\nprint(right)\n",
+   "output": "shape: (3, 2)\n┌─────┬─────┐\n│ t   ┆ v   │\n│ --- ┆ --- │\n│ i64 ┆ i64 │\n╞═════╪═════╡\n│ 0   ┆ 2   │\n│ 2   ┆ 2   │\n│ 4   ┆ 2   │\n└─────┴─────┘\nshape: (4, 2)\n┌─────┬─────┐\n│ t   ┆ v   │\n│ --- ┆ --- │\n│ i64 ┆ i64 │\n╞═════╪═════╡\n│ -2  ┆ 1   │\n│ 0   ┆ 2   │\n│ 2   ┆ 2   │\n│ 4   ┆ 1   │\n└─────┴─────┘"
+  },
+  {
+   "title": "join_asof needs both sides sorted on the key and defaults to a backward search",
+   "applies_to": [
+    "DataFrame.join_asof"
+   ],
+   "trap": "`DataFrame.join_asof` matches on the nearest key, not equal keys, and both frames must be sorted by the `on` key (within each `by` group). Sort both sides with `DataFrame.sort` first. The default `strategy='backward'` picks the last right row whose key is less than or equal to the left key, so left rows before the first right key get nulls. Exact matches are allowed (`allow_exact_matches=True`). Without a `tolerance`, a very distant match is still accepted, so set `tolerance` when stale matches would be wrong.",
+   "example": "import polars as pl\n\nleft = pl.DataFrame({\"t\": [5, 1, 10]}).sort(\"t\")\nright = pl.DataFrame({\"t\": [2, 6], \"price\": [100, 200]}).sort(\"t\")\n\nprint(left.join_asof(right, on=\"t\"))  # backward: t=1 gets null\nprint(left.join_asof(right, on=\"t\", strategy=\"forward\"))\nprint(left.join_asof(right, on=\"t\", tolerance=1))  # t=10 too far -> null\n",
+   "output": "shape: (3, 2)\n┌─────┬───────┐\n│ t   ┆ price │\n│ --- ┆ ---   │\n│ i64 ┆ i64   │\n╞═════╪═══════╡\n│ 1   ┆ null  │\n│ 5   ┆ 100   │\n│ 10  ┆ 200   │\n└─────┴───────┘\nshape: (3, 2)\n┌─────┬───────┐\n│ t   ┆ price │\n│ --- ┆ ---   │\n│ i64 ┆ i64   │\n╞═════╪═══════╡\n│ 1   ┆ 100   │\n│ 5   ┆ 200   │\n│ 10  ┆ null  │\n└─────┴───────┘\nshape: (3, 2)\n┌─────┬───────┐\n│ t   ┆ price │\n│ --- ┆ ---   │\n│ i64 ┆ i64   │\n╞═════╪═══════╡\n│ 1   ┆ null  │\n│ 5   ┆ null  │\n│ 10  ┆ null  │\n└─────┴───────┘"
+  },
+  {
+   "title": "join_where is an experimental inner join that does not preserve row order",
+   "applies_to": [
+    "DataFrame.join_where"
+   ],
+   "trap": "`DataFrame.join_where` always performs an inner join on the AND of all predicates. A row from either side can appear several times. The row order of the inputs is not preserved, and the API is marked experimental. Do not rely on the output order: sort the result explicitly with `DataFrame.sort`. Column names that occur in both tables must be referenced with the suffix (default `_right`) in the predicates.",
+   "example": "import polars as pl\n\neast = pl.DataFrame({\"id\": [1, 2, 3], \"dur\": [120, 140, 160]})\nwest = pl.DataFrame({\"t_id\": [10, 20, 30], \"time\": [130, 150, 170]})\n\nout = east.join_where(west, pl.col(\"dur\") < pl.col(\"time\"))\n# Order is not guaranteed: sort explicitly before relying on it\nprint(out.sort([\"id\", \"t_id\"]))\n",
+   "output": "shape: (6, 4)\n┌─────┬─────┬──────┬──────┐\n│ id  ┆ dur ┆ t_id ┆ time │\n│ --- ┆ --- ┆ ---  ┆ ---  │\n│ i64 ┆ i64 ┆ i64  ┆ i64  │\n╞═════╪═════╪══════╪══════╡\n│ 1   ┆ 120 ┆ 10   ┆ 130  │\n│ 1   ┆ 120 ┆ 20   ┆ 150  │\n│ 1   ┆ 120 ┆ 30   ┆ 170  │\n│ 2   ┆ 140 ┆ 20   ┆ 150  │\n│ 2   ┆ 140 ┆ 30   ┆ 170  │\n│ 3   ┆ 160 ┆ 30   ┆ 170  │\n└─────┴─────┴──────┴──────┘"
+  },
+  {
+   "title": "DataFrame.interpolate turns integers into floats and leaves edge nulls",
+   "applies_to": [
+    "DataFrame.interpolate"
+   ],
+   "trap": "`DataFrame.interpolate` applies linear interpolation, and integer columns come back as `Float64`. Nulls at the beginning and end of a column stay null, because only interior gaps are filled. Code that expects integers or no remaining nulls then breaks. Cast back with `DataFrame.cast` if needed, and fill edges separately, for example with `Expr.forward_fill` or `Expr.backward_fill`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [None, 2, None, 4, None]})\nout = df.interpolate()\nprint(out.dtypes)\nprint(out)\n\nfixed = out.with_columns(\n    pl.col(\"a\").backward_fill().forward_fill().cast(pl.Int64)\n)\nprint(fixed)\n",
+   "output": "[Float64]\nshape: (5, 1)\n┌──────┐\n│ a    │\n│ ---  │\n│ f64  │\n╞══════╡\n│ null │\n│ 2.0  │\n│ 3.0  │\n│ 4.0  │\n│ null │\n└──────┘\nshape: (5, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 2   │\n│ 2   │\n│ 3   │\n│ 4   │\n│ 4   │\n└─────┘"
+  },
+  {
+   "title": "DataFrame.map_rows loses column names and is slow; prefer expressions",
+   "applies_to": [
+    "DataFrame.map_rows"
+   ],
+   "trap": "`DataFrame.map_rows` passes each row to a Python UDF as a plain tuple, so you must index columns by position. It cannot track column names, so the result does not keep or reuse your column names. It is also much slower than native expressions. Write the logic as an expression in `DataFrame.with_columns`. If you truly need a per-value UDF, use `Expr.map_elements`, which preserves names.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"foo\": [1, 2, 3], \"bar\": [-1, 5, 8]})\n\nslow = df.map_rows(lambda row: row[0] + row[1])\nprint(slow.columns)  # original names are gone\n\nfast = df.with_columns((pl.col(\"foo\") + pl.col(\"bar\")).alias(\"total\"))\nprint(fast)\n",
+   "output": "['map']\nshape: (3, 3)\n┌─────┬─────┬───────┐\n│ foo ┆ bar ┆ total │\n│ --- ┆ --- ┆ ---   │\n│ i64 ┆ i64 ┆ i64   │\n╞═════╪═════╪═══════╡\n│ 1   ┆ -1  ┆ 0     │\n│ 2   ┆ 5   ┆ 7     │\n│ 3   ┆ 8   ┆ 11    │\n└─────┴─────┴───────┘"
+  }
+ ],
+ "failed": []
+}

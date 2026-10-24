@@ -28,6 +28,10 @@ jobs:
           # Pinned: the export's docstrings and signatures depend on the Python version, and the
           # catalogue records the one it was made with (python_version in the JSON).
           python-version: "3.13"
+      - name: Name checker regression tests (known false positives)
+        run: python scripts/tests/test_catalog_names.py
+      - name: Drafting validator regression test (exception-claim rule)
+        run: python scripts/tests/test_exception_claim.py
       - name: Repo checks (skills frontmatter, workflow cost rules, catalogue names)
         run: python scripts/check_repo.py
       # The catalogue must be exactly what the export script writes for its pinned version:

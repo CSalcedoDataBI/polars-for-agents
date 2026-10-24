@@ -1,0 +1,72 @@
+{
+ "chunk": "functions-2-pass2",
+ "group": "functions",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "from_dicts only infers the schema from the first 100 dicts",
+   "applies_to": [
+    "pl.from_dicts"
+   ],
+   "trap": "`pl.from_dicts` scans at most `infer_schema_length=100` rows to infer the schema. A key that first appears after that window is not part of the inferred schema, so its column can silently go missing. A value whose type does not match the inferred dtype raises under the default `strict=True`. For heterogeneous records, pass `infer_schema_length=None` (a full scan) or declare an explicit `schema`.",
+   "example": "import polars as pl\n\nrows = [{\"a\": i} for i in range(100)] + [{\"a\": 100, \"b\": \"late\"}]\n\ndf = pl.from_dicts(rows)\nprint(df.columns)\n\nfull = pl.from_dicts(rows, infer_schema_length=None)\nprint(full.columns)\nprint(full.tail(1))\n",
+   "output": "['a']\n['a', 'b']\nshape: (1, 2)\n┌─────┬──────┐\n│ a   ┆ b    │\n│ --- ┆ ---  │\n│ i64 ┆ str  │\n╞═════╪══════╡\n│ 100 ┆ late │\n└─────┴──────┘"
+  },
+  {
+   "title": "from_records treats square data as columns unless orient is given",
+   "applies_to": [
+    "pl.from_records"
+   ],
+   "trap": "When `orient=None`, `pl.from_records` guesses the orientation by matching the schema length against the data dimensions. If the guess is inconclusive, as with square data, it falls back to column orientation. A list of rows like `[[1, 2], [3, 4]]` with two column names is therefore silently transposed. Always pass `orient=\"row\"` when your inner sequences are rows.",
+   "example": "import polars as pl\n\ndata = [[1, 2], [3, 4]]\n\nwrong = pl.from_records(data, schema=[\"a\", \"b\"])\nprint(wrong)\n\nright = pl.from_records(data, schema=[\"a\", \"b\"], orient=\"row\")\nprint(right)\n",
+   "output": "shape: (2, 2)\n┌─────┬─────┐\n│ a   ┆ b   │\n│ --- ┆ --- │\n│ i64 ┆ i64 │\n╞═════╪═════╡\n│ 1   ┆ 3   │\n│ 2   ┆ 4   │\n└─────┴─────┘\nshape: (2, 2)\n┌─────┬─────┐\n│ a   ┆ b   │\n│ --- ┆ --- │\n│ i64 ┆ i64 │\n╞═════╪═════╡\n│ 1   ┆ 2   │\n│ 3   ┆ 4   │\n└─────┴─────┘"
+  },
+  {
+   "title": "pl.repeat infers Int32 for integers and pl.ones defaults to Float64",
+   "applies_to": [
+    "pl.repeat",
+    "pl.ones"
+   ],
+   "trap": "With `dtype=None`, `pl.repeat` infers `Int32` for integer values unless `Int64` is needed to fit the value. It does not use the `Int64` you get from Python ints in a DataFrame. `pl.ones` defaults to `Float64` even though it holds whole numbers. These dtypes can cause schema mismatches when concatenating or comparing with `Int64` columns, so pass `dtype=` explicitly.",
+   "example": "import polars as pl\n\nprint(pl.repeat(1, 3, eager=True).dtype)\nprint(pl.ones(3, eager=True).dtype)\n\ndf = pl.DataFrame({\"x\": [10, 20, 30]})\nprint(df.schema)\n\nout = df.with_columns(\n    pl.repeat(1, pl.len(), dtype=pl.Int64).alias(\"one\"),\n    pl.ones(pl.len(), dtype=pl.Int64).alias(\"one_b\"),\n)\nprint(out.schema)\n",
+   "output": "Int32\nFloat64\nSchema({'x': Int64})\nSchema({'x': Int64, 'one': Int64, 'one_b': Int64})"
+  },
+  {
+   "title": "pl.mean over several columns is per column, not a row-wise mean",
+   "applies_to": [
+    "pl.mean"
+   ],
+   "trap": "`pl.mean(\"a\", \"b\")` is sugar for `pl.col(\"a\", \"b\").mean()`. It reduces each column vertically and returns one row with one mean per column. It does not average across columns like pandas `df.mean(axis=1)`. For a per-row mean, use `pl.mean_horizontal`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 6]})\n\n# per-column means, one row\nprint(df.select(pl.mean(\"a\", \"b\")))\n\n# row-wise mean\nprint(df.with_columns(pl.mean_horizontal(\"a\", \"b\").alias(\"row_mean\")))\n",
+   "output": "shape: (1, 2)\n┌─────┬─────┐\n│ a   ┆ b   │\n│ --- ┆ --- │\n│ f64 ┆ f64 │\n╞═════╪═════╡\n│ 1.5 ┆ 4.5 │\n└─────┴─────┘\nshape: (2, 3)\n┌─────┬─────┬──────────┐\n│ a   ┆ b   ┆ row_mean │\n│ --- ┆ --- ┆ ---      │\n│ i64 ┆ i64 ┆ f64      │\n╞═════╪═════╪══════════╡\n│ 1   ┆ 3   ┆ 2.0      │\n│ 2   ┆ 6   ┆ 4.0      │\n└─────┴─────┴──────────┘"
+  },
+  {
+   "title": "pl.nth selects columns by position, not rows, and is strict",
+   "applies_to": [
+    "pl.nth"
+   ],
+   "trap": "Unlike pandas `groupby(...).nth(n)`, which picks rows, `pl.nth` selects the n-th column(s) of the context. By default (`strict=True`) an out-of-bounds index raises. Pass `strict=False` to ignore indices that do not exist. To pick the n-th row of a column, use `Expr.get` (or `Expr.gather`) instead.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 8, 3], \"b\": [4, 5, 2]})\n\nprint(df.select(pl.nth(1)))  # column 'b', not row 1\n\ntry:\n    df.select(pl.nth(0, 5))\nexcept Exception as e:\n    print(type(e).__name__)\n\nprint(df.select(pl.nth(0, 5, strict=False)))\n\n# row at position 1 of column 'a'\nprint(df.select(pl.col(\"a\").get(1)))\n",
+   "output": "shape: (3, 1)\n┌─────┐\n│ b   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 4   │\n│ 5   │\n│ 2   │\n└─────┘\nColumnNotFoundError\nshape: (3, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 1   │\n│ 8   │\n│ 3   │\n└─────┘\nshape: (1, 1)\n┌─────┐\n│ a   │\n│ --- │\n│ i64 │\n╞═════╡\n│ 8   │\n└─────┘"
+  },
+  {
+   "title": "pl.map_batches passes ONE list of Series to the function",
+   "applies_to": [
+    "pl.map_batches"
+   ],
+   "trap": "The callable given to `pl.map_batches` receives a single argument: a sequence of Series, one per entry in `exprs`. It does not receive one positional argument per column, so `lambda a, b: a + b` fails. Index into the list instead, and set `return_dtype` so Polars does not need to infer it. Prefer native expressions such as `pl.sum_horizontal` when they exist.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [10, 20]})\n\ntry:\n    df.select(pl.map_batches([\"a\", \"b\"], lambda a, b: a + b, return_dtype=pl.Int64))\nexcept Exception as e:\n    print(type(e).__name__)\n\nout = df.select(\n    pl.map_batches([\"a\", \"b\"], lambda s: s[0] + s[1], return_dtype=pl.Int64).alias(\"a_plus_b\")\n)\nprint(out)\n\nprint(df.select(pl.sum_horizontal(\"a\", \"b\").alias(\"native\")))\n",
+   "output": "TypeError\nshape: (2, 1)\n┌──────────┐\n│ a_plus_b │\n│ ---      │\n│ i64      │\n╞══════════╡\n│ 11       │\n│ 22       │\n└──────────┘\nshape: (2, 1)\n┌────────┐\n│ native │\n│ ---    │\n│ i64    │\n╞════════╡\n│ 11     │\n│ 22     │\n└────────┘"
+  },
+  {
+   "title": "json_normalize turns dicts past max_level into JSON strings",
+   "applies_to": [
+    "pl.json_normalize"
+   ],
+   "trap": "`pl.json_normalize` is unstable. Unlike pandas, it encodes any dictionary it does not unnest as JSON string data, never as objects. With `max_level` set, deeper dicts become `String` columns holding JSON text rather than nested values. Leave `max_level=None` to flatten every level, or decode the strings afterwards with `Expr.str.json_decode`.",
+   "example": "import polars as pl\n\ndata = [\n    {\"id\": 1, \"fitness\": {\"height\": 180, \"stats\": {\"bmi\": 26}}},\n    {\"id\": 2, \"fitness\": {\"height\": 155, \"stats\": {\"bmi\": 24}}},\n]\n\nshallow = pl.json_normalize(data, max_level=1)\nprint(shallow.schema)\nprint(shallow)\n\nfull = pl.json_normalize(data)\nprint(full.schema)\n",
+   "output": "Schema({'id': Int64, 'fitness.height': Int64, 'fitness.stats': String})\nshape: (2, 3)\n┌─────┬────────────────┬───────────────┐\n│ id  ┆ fitness.height ┆ fitness.stats │\n│ --- ┆ ---            ┆ ---           │\n│ i64 ┆ i64            ┆ str           │\n╞═════╪════════════════╪═══════════════╡\n│ 1   ┆ 180            ┆ {\"bmi\": 26}   │\n│ 2   ┆ 155            ┆ {\"bmi\": 24}   │\n└─────┴────────────────┴───────────────┘\nSchema({'id': Int64, 'fitness.height': Int64, 'fitness.stats.bmi': Int64})"
+  }
+ ],
+ "failed": []
+}

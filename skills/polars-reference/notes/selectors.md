@@ -344,3 +344,149 @@ Output:
 ['bar']
 ['small', 'bar', 'baz']
 ```
+
+## `~selector` selects the other columns; it does not negate boolean values
+
+Applies to: `cs.boolean`, `cs.all`
+
+On a selector, `~` is a set complement. `~cs.boolean()` means "every column that is not boolean". It does not flip true/false the way `~` does on a boolean `pl.col`. In the same way, `cs.all() - cs.numeric()` is a set difference of columns, not arithmetic. To invert the values in the boolean columns, call an expression method on the selector, such as `cs.boolean().not_()`.
+
+```python
+import polars as pl
+import polars.selectors as cs
+
+df = pl.DataFrame({"n": [1, 2], "flag": [True, False]})
+
+# Set complement: picks the NON-boolean columns
+print(df.select(~cs.boolean()).columns)
+
+# Value negation of the boolean columns
+print(df.select(cs.boolean().not_()))
+
+# Set difference of columns, not subtraction
+print(df.select(cs.all() - cs.numeric()).columns)
+```
+
+Output:
+
+```text
+['n']
+shape: (2, 1)
+┌───────┐
+│ flag  │
+│ ---   │
+│ bool  │
+╞═══════╡
+│ false │
+│ true  │
+└───────┘
+['flag']
+```
+
+## A selector that matches nothing silently returns an empty frame
+
+Applies to: `cs.list`, `cs.array`, `cs.nested`, `cs.struct`, `cs.enum`
+
+If no column matches a selector, `DataFrame.select` returns a `shape: (0, 0)` frame instead of raising. For example, `cs.list(cs.integer())` on a `list[str]` column, or `cs.array(width=3)` on width-2 arrays, gives an empty result. Downstream code then quietly works on nothing. These nested and enum selectors are also marked unstable. Check what matched with `cs.expand_selector` before relying on the result.
+
+```python
+import polars as pl
+import polars.selectors as cs
+
+df = pl.DataFrame({"tags": [["a"], ["b", "c"]], "n": [1, 2]})
+
+sel = cs.list(cs.integer())  # inner type is str, so nothing matches
+print(df.select(sel).shape)  # (0, 0), no error
+
+matched = cs.expand_selector(df, sel)
+print(matched)
+if not matched:
+    print("guard: no columns matched, falling back")
+    sel = cs.list(cs.string())
+print(df.select(sel).columns)
+```
+
+Output:
+
+```text
+(0, 0)
+()
+guard: no columns matched, falling back
+['tags']
+```
+
+## `cs.temporal` also matches time-of-day columns, not just dates
+
+Applies to: `cs.temporal`, `cs.date`, `cs.time`
+
+`cs.temporal` selects every temporal dtype, including `time` columns, not only date-like ones. Calendar operations applied through it, such as extracting the year, will hit `time` columns that have no date part. When you mean calendar dates, select them explicitly with `cs.date()` (combined with `cs.datetime()` if needed). Alternatively, remove times with `cs.temporal() - cs.time()`.
+
+```python
+import polars as pl
+import polars.selectors as cs
+from datetime import date, time
+
+df = pl.DataFrame({
+    "dt": [date(2021, 1, 1), date(2022, 6, 2)],
+    "tm": [time(12, 0), time(20, 30)],
+})
+
+print(df.select(cs.temporal()).columns)  # includes 'tm'
+print(df.select(cs.temporal() - cs.time()).columns)
+print(df.select(cs.date().dt.year()))
+```
+
+Output:
+
+```text
+['dt', 'tm']
+['dt']
+shape: (2, 1)
+┌──────┐
+│ dt   │
+│ ---  │
+│ i32  │
+╞══════╡
+│ 2021 │
+│ 2022 │
+└──────┘
+```
+
+## `cs.numeric` skips boolean columns and `cs.float` skips decimals
+
+Applies to: `cs.numeric`, `cs.float`, `cs.decimal`, `cs.boolean`
+
+Boolean columns are not numeric for selectors. So `cs.numeric().sum()` silently drops flag columns that a pandas user might expect to be counted. Likewise, `cs.float` only matches Float32/Float64. Decimal columns (for example money values) need `cs.decimal`. Combine selectors explicitly, such as `cs.numeric() | cs.boolean()` or `cs.float() | cs.decimal()`, when you want those columns included.
+
+```python
+import polars as pl
+import polars.selectors as cs
+from decimal import Decimal
+
+df = pl.DataFrame({"qty": [1, 2], "ok": [True, True]})
+print(df.select(cs.numeric()).columns)  # 'ok' missing
+print(df.select((cs.numeric() | cs.boolean()).cast(pl.Int64).sum()))
+
+money = pl.DataFrame({
+    "w": [0.5, 1.0],
+    "price": [Decimal("1.50"), Decimal("2.25")],
+})
+print(money.select(cs.float()).columns)  # 'price' missing
+print(money.select(cs.float() | cs.decimal()).columns)
+```
+
+Output:
+
+```text
+['qty']
+shape: (1, 2)
+┌─────┬─────┐
+│ qty ┆ ok  │
+│ --- ┆ --- │
+│ i64 ┆ i64 │
+╞═════╪═════╡
+│ 3   ┆ 2   │
+└─────┴─────┘
+['w']
+['w', 'price']
+```

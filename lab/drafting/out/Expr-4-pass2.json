@@ -1,0 +1,35 @@
+{
+ "chunk": "Expr-4-pass2",
+ "group": "Expr",
+ "polars_version": "1.38.1",
+ "passed": [
+  {
+   "title": "Division by zero yields inf/NaN, not null or an error",
+   "applies_to": [
+    "Expr.truediv"
+   ],
+   "trap": "`Expr.truediv` (and the `/` operator) follows IEEE-754. `n/0` gives `±inf` and `0/0` gives `NaN`. It does not return null as SQL `NULLIF` code expects, and it does not raise. Because `NaN` is not null, a later `Expr.fill_null` or `Expr.is_null` misses these rows, and they silently poison sums and means. Integer inputs also come back as `Float64`. Guard the denominator explicitly with `pl.when(...).then(None).otherwise(...)`, or clean up afterwards with `Expr.fill_nan` and `Expr.is_infinite`.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 0, 4], \"y\": [0, 0, 2]})\nout = df.with_columns(\n    naive=pl.col(\"x\").truediv(pl.col(\"y\")),\n    safe=pl.when(pl.col(\"y\") == 0)\n    .then(None)\n    .otherwise(pl.col(\"x\").truediv(pl.col(\"y\"))),\n)\nprint(out)\nprint(out.select(\n    pl.col(\"naive\").is_null().sum().alias(\"naive_nulls\"),\n    pl.col(\"naive\").fill_null(0).sum().alias(\"naive_sum_after_fill_null\"),\n    pl.col(\"safe\").is_null().sum().alias(\"safe_nulls\"),\n    pl.col(\"safe\").fill_null(0).sum().alias(\"safe_sum\"),\n))",
+   "output": "shape: (3, 4)\n┌─────┬─────┬───────┬──────┐\n│ x   ┆ y   ┆ naive ┆ safe │\n│ --- ┆ --- ┆ ---   ┆ ---  │\n│ i64 ┆ i64 ┆ f64   ┆ f64  │\n╞═════╪═════╪═══════╪══════╡\n│ 1   ┆ 0   ┆ inf   ┆ null │\n│ 0   ┆ 0   ┆ NaN   ┆ null │\n│ 4   ┆ 2   ┆ 2.0   ┆ 2.0  │\n└─────┴─────┴───────┴──────┘\nshape: (1, 4)\n┌─────────────┬───────────────────────────┬────────────┬──────────┐\n│ naive_nulls ┆ naive_sum_after_fill_null ┆ safe_nulls ┆ safe_sum │\n│ ---         ┆ ---                       ┆ ---        ┆ ---      │\n│ u32         ┆ f64                       ┆ u32        ┆ f64      │\n╞═════════════╪═══════════════════════════╪════════════╪══════════╡\n│ 0           ┆ NaN                       ┆ 2          ┆ 2.0      │\n└─────────────┴───────────────────────────┴────────────┴──────────┘"
+  },
+  {
+   "title": "Expr.slice takes (offset, length), not (start, end)",
+   "applies_to": [
+    "Expr.slice"
+   ],
+   "trap": "`Expr.slice(offset, length)` uses a length as its second argument, not an exclusive end index like Python `[1:3]` or pandas `iloc[1:3]`. Writing `slice(1, 3)` while expecting rows 1 and 2 returns three rows instead. If you think in start/end terms, pass `end - start` as the length. Leaving `length=None` takes everything from `offset` onward.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [10, 20, 30, 40, 50]})\n# Python-style intent: rows [1:3] -> 20, 30\nwrong = df.select(pl.col(\"a\").slice(1, 3))\nstart, end = 1, 3\nright = df.select(pl.col(\"a\").slice(start, end - start))\nprint(wrong[\"a\"].to_list())\nprint(right[\"a\"].to_list())",
+   "output": "[20, 30, 40]\n[20, 30]"
+  },
+  {
+   "title": "Expr.std defaults to sample std (ddof=1), not population std",
+   "applies_to": [
+    "Expr.std"
+   ],
+   "trap": "`Expr.std` divides by `N - ddof` with `ddof=1` by default, which gives the sample standard deviation. Code ported from NumPy (where `np.std` defaults to population, ddof=0), or written with a population formula in mind, will silently get a larger value. Pass `ddof=0` explicitly when you need the population standard deviation.",
+   "example": "import polars as pl\n\ndf = pl.DataFrame({\"a\": [1.0, 2.0, 3.0, 4.0]})\nprint(df.select(\n    pl.col(\"a\").std().alias(\"default_ddof1\"),\n    pl.col(\"a\").std(ddof=0).alias(\"population_ddof0\"),\n))",
+   "output": "shape: (1, 2)\n┌───────────────┬──────────────────┐\n│ default_ddof1 ┆ population_ddof0 │\n│ ---           ┆ ---              │\n│ f64           ┆ f64              │\n╞═══════════════╪══════════════════╡\n│ 1.290994      ┆ 1.118034         │\n└───────────────┴──────────────────┘"
+  }
+ ],
+ "failed": []
+}

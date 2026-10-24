@@ -194,6 +194,21 @@ def run_example(code: str) -> tuple[bool, str]:
     return True, r.stdout.rstrip()[:3000]
 
 
+# The idiom the prompt asks for when a note shows a failing call: catch it and print its type
+# name. A note that does this is CLAIMING the call raises, so the run must actually raise -- else
+# the example proves the opposite of its trap and would teach wrong behaviour.
+EXPECTS_EXCEPTION = re.compile(r"type\(\s*\w+\s*\)\.__name__|\.__class__\.__name__|print\(\s*repr\(\s*\w+\s*\)\s*\)")
+EXC_IN_OUTPUT = re.compile(r"\b[A-Za-z_]\w*(?:Error|Exception|Warning)\b")
+
+
+def example_expects_exception(code: str) -> bool:
+    return "except" in code and bool(EXPECTS_EXCEPTION.search(code))
+
+
+def output_shows_exception(output: str) -> bool:
+    return bool(EXC_IN_OUTPUT.search(output or ""))
+
+
 def validate(note: dict) -> list[str]:
     problems = []
     for name in note.get("applies_to", []):
@@ -209,6 +224,11 @@ def validate(note: dict) -> list[str]:
         ok, output = run_example(note["example"])
         if ok:
             note["output"] = output
+            # A note that catches and prints an exception type is claiming the call raises. If the
+            # run shows no exception, the example contradicts the trap: drop it (reviewer finding).
+            if example_expects_exception(note["example"]) and not output_shows_exception(output):
+                problems.append("example catches and prints an exception type, but the run shows "
+                                "none: the trap's error claim is not demonstrated")
         else:
             problems.append(f"example failed: {output}")
     return problems
