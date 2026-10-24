@@ -1,0 +1,328 @@
+{
+  "model": "claude-haiku-5-5",
+  "provider": "anthropic",
+  "records": [
+    {
+      "id": "read-csv-select",
+      "regime": "core",
+      "category": "functions",
+      "question": "In Polars, how do I read a CSV file and keep only two columns by name? Name the functions and show a short snippet.",
+      "A": {
+        "text": "Use `pl.read_csv` to load the file, then `DataFrame.select` with the column names (or `pl.col`) to keep just those two.\n\n```python\nimport polars as pl\n\ndf = pl.read_csv(\"data.csv\").select([\"name\", \"age\"])\n\n# equivalent, using expressions\ndf = pl.read_csv(\"data.csv\").select(pl.col(\"name\", \"age\"))\n```\n\nOr, to avoid loading the other columns at all, pass `columns=` to `read_csv`:\n\n```python\ndf = pl.read_csv(\"data.csv\", columns=[\"name\", \"age\"])\n```\n\nThe `columns=` option is usually the more efficient choice, since unneeded columns are never parsed.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `pl.read_csv` to load the file, then `DataFrame.select` with `pl.col` to keep the named columns:\n\n```python\nimport polars as pl\n\ndf = pl.read_csv(\"data.csv\").select(pl.col(\"name\", \"price\"))\n```\n\n`pl.col` accepts several names at once, so this keeps only `name` and `price`. For large files, use `pl.scan_csv(...).select(...)` instead. It builds a lazy query, so Polars reads only the columns you need, and you call `.collect()` to run it.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "conditional-column",
+      "regime": "core",
+      "category": "functions",
+      "question": "In Polars, how do I add a column whose value is \"high\" when price > 100 and \"low\" otherwise? Name the functions and show the expression.",
+      "A": {
+        "text": "Use `pl.when().then().otherwise()` inside `with_columns`:\n\n```python\nimport polars as pl\n\ndf = df.with_columns(\n    pl.when(pl.col(\"price\") > 100)\n      .then(pl.lit(\"high\"))\n      .otherwise(pl.lit(\"low\"))\n      .alias(\"price_level\")\n)\n```\n\n- `pl.when(...)` takes a boolean expression (here `pl.col(\"price\") > 100`).\n- `.then(...)` is the value when the condition is true.\n- `.otherwise(...)` is the value when it is false.\n- `.alias(\"price_level\")` names the new column.\n- `df.with_columns(...)` adds the column and returns a new DataFrame.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `pl.when` / `.then` / `.otherwise` inside `with_columns`:\n\n```python\nimport polars as pl\n\ndf = df.with_columns(\n    pl.when(pl.col(\"price\") > 100)\n      .then(pl.lit(\"high\"))\n      .otherwise(pl.lit(\"low\"))\n      .alias(\"price_level\")\n)\n```\n\n- `pl.col(\"price\")` references the column.\n- `pl.when(...)` starts the conditional, `.then(...)` gives the value when true, and `.otherwise(...)` gives the value when false.\n- `pl.lit(\"high\")` and `pl.lit(\"low\")` wrap the strings as literal expressions.\n- `.alias(\"price_level\")` names the new column.\n- `with_columns` adds the column and keeps the existing ones.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "concat-frames",
+      "regime": "core",
+      "category": "functions",
+      "question": "In Polars I have two DataFrames with the same columns. How do I stack them into one? Name the function and show it.",
+      "A": {
+        "text": "Use `pl.concat` with a list of the DataFrames. With the default `how=\"vertical\"`, it stacks rows, and the columns must match in name and dtype.\n\n```python\nimport polars as pl\n\ndf1 = pl.DataFrame({\"a\": [1, 2], \"b\": [\"x\", \"y\"]})\ndf2 = pl.DataFrame({\"a\": [3, 4], \"b\": [\"z\", \"w\"]})\n\ncombined = pl.concat([df1, df2])\n```\n\nIf the schemas differ slightly (e.g., column order or missing columns), you can pass `how=\"vertical_relaxed\"` to coerce compatible dtypes, or `how=\"diagonal\"` to align by column name and fill missing columns with nulls.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `pl.concat` with a list of the frames. The default `how=\"vertical\"` stacks rows, and the column names and dtypes must match.\n\n```python\nimport polars as pl\n\ndf1 = pl.DataFrame({\"a\": [1, 2], \"b\": [\"x\", \"y\"]})\ndf2 = pl.DataFrame({\"a\": [3], \"b\": [\"z\"]})\n\nstacked = pl.concat([df1, df2])\n```\n\n```\nshape: (3, 2)\n┌─────┬─────┐\n│ a   ┆ b   │\n│ --- ┆ --- │\n│ i64 ┆ str │\n╞═════╪═════╡\n│ 1   ┆ x   │\n│ 2   ┆ y   │\n│ 3   ┆ z   │\n└─────┴─────┘\n```",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "groupby-agg",
+      "regime": "core",
+      "category": "DataFrame",
+      "question": "In Polars, how do I group a DataFrame by a \"region\" column and sum \"sales\" per group? Name the methods and show the snippet.",
+      "A": {
+        "text": "Use `group_by` with `agg` and the `pl.col(...).sum()` expression:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"region\": [\"North\", \"South\", \"North\", \"East\", \"South\"],\n    \"sales\": [100, 200, 150, 50, 300],\n})\n\nresult = df.group_by(\"region\").agg(pl.col(\"sales\").sum())\nprint(result)\n```\n\nKey pieces:\n- `DataFrame.group_by(\"region\")` creates the grouping (in older Polars versions this was `groupby`, now deprecated).\n- `GroupBy.agg(...)` applies aggregations to each group.\n- `pl.col(\"sales\").sum()` is the expression that sums the `sales` column within each group.\n\nThe output has one row per region with columns `region` and `sales`. To get a sorted result, add `.sort(\"sales\", descending=True)` or `.sort(\"region\")` after the aggregation.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `group_by` to start the grouping, then `agg` with `pl.col(\"sales\").sum()`:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"region\": [\"North\", \"South\", \"North\", \"East\", \"South\"],\n    \"sales\":  [100, 200, 150, 50, 300],\n})\n\nresult = df.group_by(\"region\").agg(pl.col(\"sales\").sum())\nprint(result)\n```\n\n`group_by` is the DataFrame method that starts the operation. `agg` takes expressions, and `pl.col(\"sales\").sum()` sums the `sales` column within each group. Don't use `df.sum()` for this. It aggregates every column across the whole frame, not per group.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "join-frames",
+      "regime": "core",
+      "category": "DataFrame",
+      "question": "In Polars, how do I left-join a DataFrame to another on a shared \"id\" column? Name the method and its key argument and show it.",
+      "A": {
+        "text": "In Polars, use `DataFrame.join()` with `how=\"left\"` and `on=\"id\"`.\n\n```python\nimport polars as pl\n\ndf_left = pl.DataFrame({\"id\": [1, 2, 3], \"name\": [\"a\", \"b\", \"c\"]})\ndf_right = pl.DataFrame({\"id\": [1, 3, 4], \"score\": [10, 30, 40]})\n\nresult = df_left.join(df_right, on=\"id\", how=\"left\")\nprint(result)\n```\n\nKey arguments:\n- `on`: the shared column name (or list of names) to match on.\n- `how=\"left\"`: keeps every row from the left DataFrame, filling unmatched right-side columns with nulls.\n\nHere, `id=2` has no match in `df_right`, so its `score` is `null`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `DataFrame.join()`. The join type goes in `how=\"left\"`, and the shared column goes in `on=\"id\"`.\n\n```python\nimport polars as pl\n\ndf_left = pl.DataFrame({\"id\": [1, 2, 3], \"name\": [\"a\", \"b\", \"c\"]})\ndf_right = pl.DataFrame({\"id\": [1, 3, 4], \"score\": [10, 30, 40]})\n\nresult = df_left.join(df_right, on=\"id\", how=\"left\")\n# id=1 -> score 10, id=2 -> null, id=3 -> score 30\n```",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "pivot-wide",
+      "regime": "core",
+      "category": "DataFrame",
+      "question": "In Polars (eager), how do I pivot a long DataFrame to wide, one column per category with the summed value? Name the method and show it.",
+      "A": {
+        "text": "Use `DataFrame.pivot` with `aggregate_function=\"sum\"`. In Polars 1.0+:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"date\":     [\"2024-01\", \"2024-01\", \"2024-02\", \"2024-02\", \"2024-02\"],\n    \"category\": [\"A\", \"B\", \"A\", \"A\", \"B\"],\n    \"value\":    [1, 2, 3, 4, 5],\n})\n\nwide = df.pivot(on=\"category\", index=\"date\", values=\"value\", aggregate_function=\"sum\")\n```\n\nThis gives one row per `date`, one column per `category`, with the summed `value` in each cell. Missing combinations become null.\n\nIn Polars versions before 1.0, the category column was passed as `columns=` instead of `on=`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use **`DataFrame.pivot`** with `aggregate_function=\"sum\"`. `on` names the column whose values become the new headers, `index` names the column(s) that stay as row keys, and `values` names the column to sum.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"date\":     [\"2024-01\", \"2024-01\", \"2024-02\", \"2024-02\", \"2024-02\"],\n    \"category\": [\"a\", \"b\", \"a\", \"a\", \"b\"],\n    \"value\":    [1, 2, 3, 4, 5],\n})\n\nwide = df.pivot(\n    on=\"category\",\n    index=\"date\",\n    values=\"value\",\n    aggregate_function=\"sum\",\n)\n# date    | a | b\n# 2024-01| 1 | 2\n# 2024-02| 7 | 5\n```\n\nUse `pivot` rather than `unstack` here, because `unstack` doesn't aggregate and expects unique index/column pairs.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "fill-nulls",
+      "regime": "core",
+      "category": "Expr",
+      "question": "In Polars, how do I replace nulls in a numeric column with 0, and separately forward-fill another column? Name the expression methods and show them.",
+      "A": {
+        "text": "Use `fill_null` for the constant replacement and `fill_null(strategy=\"forward\")` for forward-fill.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"amount\": [1.0, None, 3.0, None],\n    \"status\": [\"a\", None, None, \"d\"],\n})\n\ndf = df.with_columns(\n    pl.col(\"amount\").fill_null(0),                    # replace nulls with 0\n    pl.col(\"status\").fill_null(strategy=\"forward\"),   # carry last non-null value forward\n)\n```\n\nResult:\n```\namount  status\n1.0     a\n0.0     a\n3.0     a\n0.0     d\n```\n\nNotes:\n- `fill_null(0)` works on the numeric column; the literal is cast to the column's dtype.\n- `fill_null(strategy=\"forward\")` (alias `\"ffill\"` also works in recent versions) fills from the previous non-null value. Use `strategy=\"backward\"` for the reverse direction.\n- `fill_null` with a `strategy` takes no value argument, so don't pass both.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `fill_null` for the numeric column and `forward_fill` for the other one:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"amount\": [1.5, None, 3.0, None],\n    \"status\": [\"open\", None, None, \"closed\"],\n})\n\ndf = df.with_columns(\n    pl.col(\"amount\").fill_null(0),   # replace nulls with 0\n    pl.col(\"status\").forward_fill(), # fill each null with the last non-null value above it\n)\n```\n\nResult: `amount` becomes `[1.5, 0.0, 3.0, 0.0]` and `status` becomes `[\"open\", \"open\", \"open\", \"closed\"]`.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "cumulative-sum",
+      "regime": "core",
+      "category": "Expr",
+      "question": "In Polars, how do I compute a running (cumulative) sum of a column within an expression? Name the method and show it.",
+      "A": {
+        "text": "The method is `cum_sum()` on an expression (also available as `cumsum()` in older versions, and `cum_sum` is the current name).\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 2, 3, 4]})\n\ndf.with_columns(\n    running_total=pl.col(\"x\").cum_sum()\n)\n```\n\nResult:\n\n```\nshape: (4, 2)\n┌─────┬───────────────┐\n│ x   ┆ running_total │\n│ --- ┆ ---           │\n│ i64 ┆ i64           │\n╞═════╪═══════════════╡\n│ 1   ┆ 1             │\n│ 2   ┆ 3             │\n│ 3   ┆ 6             │\n│ 4   ┆ 10            │\n└─────┴───────────────┘\n```\n\nTo compute it per group, combine it with `over()`:\n\n```python\ndf.with_columns(\n    running_total=pl.col(\"x\").cum_sum().over(\"group\")\n)\n```",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "The method is `cum_sum`, which returns the running total at every row.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"x\": [1, 2, 3, 4]})\n\ndf.with_columns(running_total=pl.col(\"x\").cum_sum())\n# x | running_total\n# 1 | 1\n# 2 | 3\n# 3 | 6\n# 4 | 10\n```\n\nIt also works inside `group_by` / `over` if you want a per-group running sum, e.g. `pl.col(\"x\").cum_sum().over(\"group\")`.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "cast-and-round",
+      "regime": "core",
+      "category": "Expr",
+      "question": "In Polars, how do I round a float column to 2 decimals and then cast it to an integer type? Name the expression methods and show them.",
+      "A": {
+        "text": "Use `round` on the expression, then `cast` to the integer dtype:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"x\": [1.2345, 2.5, 3.9999, -1.005]})\n\ndf = df.with_columns(\n    pl.col(\"x\").round(2).cast(pl.Int64).alias(\"x_int\")\n)\nprint(df)\n```\n\n- `Expr.round(decimals)` rounds the float to the given number of decimal places (here 2).\n- `Expr.cast(pl.Int64)` converts the result to an integer dtype. Casting truncates toward zero, so `3.99` becomes `3`.\n\nIf you want the rounded value to the nearest integer instead, skip the cast to integer and use `round(0)`, or cast with `pl.Int64` after rounding to 2 decimals as shown above.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Chain `round` and `cast`:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"x\": [1.234, 2.678, -3.456]})\n\ndf.with_columns(\n    pl.col(\"x\").round(2).cast(pl.Int64).alias(\"x_int\")\n)\n```\n\n- `round(2)` rounds the float to 2 decimal places (still a float).\n- `cast(pl.Int64)` converts it to an integer type. Casting truncates toward zero, so `2.68` becomes `2`, not `3`.\n\nIf you want the value rounded to the nearest integer instead, skip the two-decimal step and use `round(0)` before the cast.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "value-counts",
+      "regime": "core",
+      "category": "Series",
+      "question": "In Polars, given a Series, how do I get the count of each distinct value, and separately the list of unique values? Name the methods and show them.",
+      "A": {
+        "text": "Use `Series.value_counts()` for the counts and `Series.unique()` for the distinct values.\n\n```python\nimport polars as pl\n\ns = pl.Series(\"x\", [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"])\n\n# Count of each distinct value (returns a DataFrame)\ncounts = s.value_counts(sort=True)\nprint(counts)\n# columns: \"x\" (the values) and \"count\"\n\n# Distinct values (returns a Series)\nuniques = s.unique()\nprint(uniques.to_list())  # ['a', 'b', 'c']\n```\n\n`value_counts` returns a DataFrame, not a Series. Its count column is named `\"count\"` in recent Polars versions; older releases used `\"counts\"`. If you want a plain dict, use `dict(zip(counts[s.name], counts[\"count\"]))`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use **`Series.value_counts()`** for the count of each distinct value, and **`Series.unique()`** for the distinct values.\n\n```python\nimport polars as pl\n\ns = pl.Series(\"color\", [\"red\", \"blue\", \"red\", \"green\", \"blue\", \"red\"])\n\n# Count of each distinct value (returns a DataFrame with the value and a \"count\" column)\ncounts = s.value_counts(sort=True)\nprint(counts)\n\n# Distinct values (returns a Series)\nuniques = s.unique()\nprint(uniques)\n```\n\nIf you only need the counts as a Series, aligned with `unique()` in order of first appearance, use **`Series.unique_counts()`**:\n\n```python\ns.unique()          # [\"red\", \"blue\", \"green\"]\ns.unique_counts()   # [3, 2, 1]\n```",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "str-extract-group",
+      "regime": "deep",
+      "category": "Expr.str",
+      "question": "In Polars, I have codes like \"INV-2024-0042\" in a column. How do I extract the middle number with a regex capture group? Name the string method and show the expression.",
+      "A": {
+        "text": "Use `str.extract` with a capture group. The `group_index` argument selects which group to return.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"code\": [\"INV-2024-0042\", \"INV-2023-0917\"]})\n\ndf = df.with_columns(\n    middle=pl.col(\"code\").str.extract(r\"^INV-(\\d+)-\\d+$\", group_index=1)\n)\nprint(df)\n```\n\nOutput:\n\n```\nshape: (2, 2)\n┌────────────────┬────────┐\n│ code           ┆ middle │\n│ ---            ┆ ---    │\n│ str            ┆ str    │\n╞════════════════╪════════╡\n│ INV-2024-0042  ┆ 2024   │\n│ INV-2023-0917  ┆ 2023   │\n└────────────────┴────────┘\n```\n\nThe result is a string column. If you need an integer, chain a cast: `.cast(pl.Int64)`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `str.extract` expression. It takes a regex pattern and returns the capture group selected by `group_index` (default `1`).\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"code\": [\"INV-2024-0042\", \"INV-2023-0007\"]})\n\ndf = df.with_columns(\n    middle=pl.col(\"code\").str.extract(r\"^INV-(\\d+)-\\d+$\", group_index=1)\n)\n# middle: \"2024\", \"2023\"  (String)\n```\n\nTo get an integer, chain a cast:\n\n```python\ndf = df.with_columns(\n    middle=pl.col(\"code\").str.extract(r\"^INV-(\\d+)-\\d+$\").cast(pl.Int64)\n)\n```",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "str-contains-split",
+      "regime": "deep",
+      "category": "Expr.str",
+      "question": "In Polars, how do I filter rows whose text column contains \"error\" (regex), and separately split that column on commas into a list? Name the string methods and show them.",
+      "A": {
+        "text": "Use the `str` namespace: `str.contains` for the regex filter and `str.split` for the comma split.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"id\": [1, 2, 3],\n    \"msg\": [\"disk error, retrying\", \"all good\", \"Error: timeout, net error\"],\n})\n\n# 1) Filter rows where msg matches the regex \"error\" (case-insensitive via (?i))\nfiltered = df.filter(pl.col(\"msg\").str.contains(r\"(?i)error\"))\n\n# 2) Split msg on commas into a List[str] column\nsplit = df.with_columns(\n    pl.col(\"msg\").str.split(\",\").alias(\"msg_parts\")\n)\n\nprint(filtered)\nprint(split)\n```\n\nNotes:\n- `str.contains(pattern, literal=False)` treats the pattern as a regex by default; `(?i)` makes it case-insensitive.\n- `str.split(by, inclusive=False)` returns a `List[String]`. Use `.str.strip_chars()` on the list elements afterward if you want to remove leading spaces, e.g. `pl.col(\"msg\").str.split(\",\").list.eval(pl.element().str.strip_chars())`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `str.contains` to filter and `str.split` to break the column into a list. Both are methods on the `.str` namespace of a string expression.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"id\": [1, 2, 3],\n    \"text\": [\"disk error,retry,ok\", \"all good\", \"Error: timeout,net\"],\n})\n\n# 1. Filter rows where text matches the regex \"error\"\n#    (contains is regex by default; add (?i) for case-insensitive)\nerrors = df.filter(pl.col(\"text\").str.contains(\"(?i)error\"))\n\n# 2. Split the text on commas into a List[String] column\nsplit = df.with_columns(parts=pl.col(\"text\").str.split(\",\"))\n```\n\n`str.split` treats the delimiter as a literal substring, not a regex. The result is a `List(String)` column, so `pl.col(\"parts\").list.len()` or `.explode()` works on it if you need that next.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "str-pad-zeros",
+      "regime": "deep",
+      "category": "Expr.str",
+      "question": "In Polars, how do I left-pad a string column with zeros to width 6, and uppercase another? Name the string methods and show them.",
+      "A": {
+        "text": "Use `str.zfill` for zero-padding and `str.to_uppercase` for case.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"code\": [\"42\", \"7\", \"123456\"],\n    \"name\": [\"abc\", \"Hello\", \"xyz\"],\n})\n\ndf = df.with_columns(\n    pl.col(\"code\").str.zfill(6).alias(\"code_padded\"),\n    pl.col(\"name\").str.to_uppercase().alias(\"name_upper\"),\n)\n\nprint(df)\n```\n\nOutput:\n\n```\nshape: (3, 4)\n┌────────┬─────────┬────────────┬────────────┐\n│ code   ┆ name    ┆ code_padded┆ name_upper │\n│ ---    ┆ ---     ┆ ---        ┆ ---        │\n│ str    ┆ str     ┆ str        ┆ str        │\n╞════════╪═════════╪════════════╪════════════╡\n│ 42     ┆ abc     ┆ 000042     ┆ ABC        │\n│ 7      ┆ Hello   ┆ 000007     ┆ HELLO      │\n│ 123456 ┆ xyz     ┆ 123456     ┆ XYZ        │\n└────────┴─────────┴────────────┴────────────┘\n```\n\n`str.zfill(6)` pads on the left with zeros up to width 6 and leaves longer strings unchanged. `str.to_uppercase()` converts the text to uppercase.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `str.zfill` to left-pad with zeros, and `str.to_uppercase` to uppercase:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"id\": [\"42\", \"1234\"], \"code\": [\"abc\", \"xyz\"]})\n\ndf.with_columns(\n    pl.col(\"id\").str.zfill(6),        # \"000042\", \"001234\"\n    pl.col(\"code\").str.to_uppercase(), # \"ABC\", \"XYZ\"\n)\n```\n\n`pad_start(6, \"0\")` gives the same zero-padding result if you want an explicit fill character.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "dt-parts",
+      "regime": "deep",
+      "category": "Expr.dt",
+      "question": "In Polars, from a datetime column, how do I get the year and the weekday as separate columns? Name the temporal methods and show them.",
+      "A": {
+        "text": "In Polars, use the `.dt` namespace: `.dt.year()` for the year and `.dt.weekday()` for the weekday.\n\n```python\nimport polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\n    \"ts\": [datetime(2024, 3, 15, 10, 30), datetime(2023, 12, 31, 23, 59)]\n})\n\nout = df.with_columns(\n    pl.col(\"ts\").dt.year().alias(\"year\"),\n    pl.col(\"ts\").dt.weekday().alias(\"weekday\"),  # ISO: Monday=1 ... Sunday=7\n)\nprint(out)\n```\n\nNotes:\n- `.dt.weekday()` returns 1 (Monday) through 7 (Sunday), following ISO 8601.\n- If you want the weekday name instead, use `.dt.strftime(\"%A\")`, which gives strings like \"Friday\".",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `dt.year()` and `dt.weekday()` expression methods inside `with_columns`:\n\n```python\nimport polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\n    \"ts\": [datetime(2024, 3, 15, 10, 30), datetime(2023, 12, 31, 23, 59)]\n})\n\ndf = df.with_columns(\n    pl.col(\"ts\").dt.year().alias(\"year\"),\n    pl.col(\"ts\").dt.weekday().alias(\"weekday\"),\n)\n\nprint(df)\n```\n\n`dt.weekday()` returns an ISO weekday number, where Monday is 1 and Sunday is 7.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "dt-truncate",
+      "regime": "deep",
+      "category": "Expr.dt",
+      "question": "In Polars, how do I truncate a datetime column to the start of its month, and separately add 3 days to it? Name the temporal methods and show them.",
+      "A": {
+        "text": "In Polars, use `dt.truncate()` with the `\"1mo\"` interval to snap to the first of the month, and `+ pl.duration(days=3)` (or `dt.offset_by(\"3d\")`) to add days.\n\n```python\nimport polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\n    \"ts\": [datetime(2024, 5, 17, 14, 30), datetime(2024, 11, 2, 8, 0)]\n})\n\ndf = df.with_columns(\n    month_start=pl.col(\"ts\").dt.truncate(\"1mo\"),\n    plus_3_days=pl.col(\"ts\") + pl.duration(days=3),\n    # equivalent alternative for the addition:\n    plus_3_days_alt=pl.col(\"ts\").dt.offset_by(\"3d\"),\n)\nprint(df)\n```\n\nNotes:\n- `dt.truncate(\"1mo\")` returns the datetime at midnight on the first day of the month. Use `dt.truncate(\"1d\")` for day-level truncation, or `dt.truncate(\"1h\")` for hourly.\n- `dt.offset_by(\"3d\")` is the string-based form of the addition and works with calendar units such as `\"1mo\"`, which `pl.duration` does not, since a month has no fixed length.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `dt.truncate(\"1mo\")` to get the start of the month, and `dt.offset_by(\"3d\")` to add 3 days:\n\n```python\nimport polars as pl\nfrom datetime import datetime\n\ndf = pl.DataFrame({\"ts\": [datetime(2024, 3, 17, 14, 30)]})\n\ndf.with_columns(\n    month_start=pl.col(\"ts\").dt.truncate(\"1mo\"),  # 2024-03-01 00:00:00\n    plus_3d=pl.col(\"ts\").dt.offset_by(\"3d\"),      # 2024-03-20 14:30:00\n)\n```\n\n`dt.month_start()` also rolls a date back to the first of its month. `truncate` is the one that gives you midnight on that day.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "list-eval",
+      "regime": "deep",
+      "category": "Expr.list",
+      "question": "In Polars, I have a column of lists of numbers. How do I get the max of each list, and separately sort each list? Name the list methods and show them.",
+      "A": {
+        "text": "In Polars, list operations live under the `.list` namespace. Use `.list.max()` for the maximum of each list and `.list.sort()` to sort each list.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"nums\": [[3, 1, 2], [9, 4], [7, 8, 5, 6]]\n})\n\nresult = df.with_columns(\n    max_val=pl.col(\"nums\").list.max(),\n    sorted_nums=pl.col(\"nums\").list.sort(),\n)\n\nprint(result)\n```\n\nOutput:\n\n```\nshape: (3, 3)\n┌───────────┬─────────┬─────────────┐\n│ nums      ┆ max_val ┆ sorted_nums │\n│ ---       ┆ ---     ┆ ---         │\n│ list[i64] ┆ i64     ┆ list[i64]   │\n╞═══════════╪═════════╪═════════════╡\n│ [3, 1, 2] ┆ 3       ┆ [1, 2, 3]   │\n│ [9, 4]    ┆ 9       ┆ [4, 9]      │\n│ [7, 8, ...┆ 8       ┆ [5, 6, ...   │\n└───────────┴─────────┴─────────────┘\n```\n\n- `.list.max()` returns a scalar per row.\n- `.list.sort()` returns a list per row. Pass `descending=True` for reverse order.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `list` namespace: `list.max()` for the per-list maximum and `list.sort()` for sorting each list.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [[3, 1, 2], [5, 4], [0, 9, 7]]})\n\ndf.with_columns(\n    pl.col(\"a\").list.max().alias(\"max\"),\n    pl.col(\"a\").list.sort().alias(\"sorted\"),\n)\n```\n\nResult:\n\n```\nshape: (3, 3)\n┌───────────┬─────┬───────────┐\n│ a         ┆ max ┆ sorted    │\n│ ---       ┆ --- ┆ ---       │\n│ list[i64] ┆ i64 ┆ list[i64] │\n╞═══════════╪═════╪═══════════╡\n│ [3, 1, 2] ┆ 3   ┆ [1, 2, 3] │\n│ [5, 4]    ┆ 5   ┆ [4, 5]    │\n│ [0, 9, 7] ┆ 9   ┆ [0, 7, 9] │\n└───────────┴─────┴───────────┘\n```\n\nFor a descending sort, pass `descending=True` to `list.sort()`.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "list-gather",
+      "regime": "deep",
+      "category": "Expr.list",
+      "question": "In Polars, how do I take the first element of each list in a list column? Name the list method and show it.",
+      "A": {
+        "text": "The list namespace method is `Expr.list.first()`.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2, 3], [4, 5], [6]]})\n\ndf.with_columns(first=pl.col(\"a\").list.first())\n```\n\nOutput:\n\n```\nshape: (3, 2)\n┌───────────┬───────┐\n│ a         ┆ first │\n│ ---       ┆ ---   │\n│ list[i64] ┆ i64   │\n╞═══════════╪═══════╡\n│ [1, 2, 3] ┆ 1     │\n│ [4, 5]    ┆ 4     │\n│ [6]       ┆ 6     │\n└───────────┴───────┘\n```\n\n`list.first()` is shorthand for `list.get(0)`. If you want the last element, use `list.last()`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `first` method in the `list` namespace: `pl.col(...).list.first()`.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [[1, 2, 3], [4, 5], []]})\n\ndf.with_columns(first=pl.col(\"a\").list.first())\n# first: [1, 4, null]\n```\n\nEmpty lists return null.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "selectors-numeric",
+      "regime": "deep",
+      "category": "selectors",
+      "question": "In Polars, using the selectors module, how do I select all numeric columns, and separately all columns whose name matches a regex? Name the selectors and show them.",
+      "A": {
+        "text": "Use `cs.numeric()` for numeric columns and `cs.matches()` for a regex on column names:\n\n```python\nimport polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\n    \"id\": [1, 2],\n    \"price_usd\": [1.5, 2.5],\n    \"price_eur\": [1.2, 2.1],\n    \"name\": [\"a\", \"b\"],\n})\n\n# All numeric columns\ndf.select(cs.numeric())\n\n# Columns whose names match a regex\ndf.select(cs.matches(r\"^price_\"))\n```\n\n- `cs.numeric()` selects integer, float, and decimal columns.\n- `cs.matches(pattern)` selects columns whose names match the regex `pattern`.\n\nSelectors can be combined with `|`, `&`, and `-`, for example `df.select(cs.numeric() | cs.matches(r\"^price_\"))`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `cs.numeric()` for numeric columns and `cs.matches()` for regex name matching.\n\n```python\nimport polars as pl\nimport polars.selectors as cs\n\ndf = pl.DataFrame({\n    \"id\": [1, 2],\n    \"price\": [9.5, 3.2],\n    \"name\": [\"a\", \"b\"],\n    \"value_1\": [10, 20],\n    \"value_2\": [0.1, 0.2],\n})\n\n# All numeric columns (integer and float)\ndf.select(cs.numeric())\n\n# All columns whose names match a regex\ndf.select(cs.matches(r\"^value_\\d+$\"))\n```\n\n`cs.numeric()` returns the integer and float columns. `cs.matches(pattern)` takes a regex string and returns the columns whose names match it.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "rename-columns",
+      "regime": "deep",
+      "category": "DataFrame",
+      "question": "In Polars (coming from pandas), how do I rename the columns \"a\" and \"b\" to \"x\" and \"y\" on a DataFrame? Name the method and its exact argument shape and show it.",
+      "A": {
+        "text": "Use `DataFrame.rename()` with a dict mapping old names to new names:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4], \"c\": [5, 6]})\n\ndf = df.rename({\"a\": \"x\", \"b\": \"y\"})\nprint(df)\n# shape: (2, 3)\n# ┌─────┬─────┬─────┐\n# │ x   ┆ y   ┆ c   │\n# │ --- ┆ --- ┆ --- │\n# │ i64 ┆ i64 ┆ i64 │\n# ╞═════╪═════╪═════╡\n# │ 1   ┆ 3   ┆ 5   │\n# │ 2   ┆ 4   ┆ 6   │\n# └─────┴─────┴─────┘\n```\n\nThe argument is a single `dict` of `{old_name: new_name}`. Columns not listed keep their names, and `rename` returns a new DataFrame (Polars is immutable by default, so reassign the result). Pandas users may be used to `df.rename(columns={...})`, but Polars takes the mapping directly with no `columns=` keyword.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `DataFrame.rename` with a dict mapping old names to new names:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4], \"c\": [5, 6]})\n\ndf = df.rename({\"a\": \"x\", \"b\": \"y\"})\n# columns: [\"x\", \"y\", \"c\"]\n```\n\nThe signature is `rename(mapping, *, strict=True)`. Unlike pandas, there's no `columns=` keyword: the mapping is the first positional argument. It returns a new DataFrame rather than modifying the original in place, so assign the result. `strict=True` (the default) raises an error if a key in the mapping isn't a column in the frame.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "unpivot-long",
+      "regime": "deep",
+      "category": "DataFrame",
+      "question": "In Polars, how do I reshape a wide DataFrame to long form (one row per value), the opposite of pivot? Name the current method and show it.",
+      "A": {
+        "text": "Use `DataFrame.unpivot()`, which replaced `melt()` in Polars 1.0. `melt()` still works but is deprecated.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"id\": [1, 2],\n    \"a\": [10, 30],\n    \"b\": [20, 40],\n})\n\nlong = df.unpivot(\n    on=[\"a\", \"b\"],          # columns to stack (defaults to all non-index columns)\n    index=[\"id\"],           # columns to keep as identifiers\n    variable_name=\"var\",    # name for the former column names\n    value_name=\"value\",     # name for the stacked values\n)\nprint(long)\n```\n\nOutput:\n\n```\nshape: (4, 3)\n┌─────┬─────┬───────┐\n│ id  ┆ var ┆ value │\n│ --- ┆ --- ┆ ---   │\n│ i64 ┆ str ┆ i64   │\n╞═════╪═════╪═══════╡\n│ 1   ┆ a   ┆ 10    │\n│ 2   ┆ a   ┆ 30    │\n│ 1   ┆ b   ┆ 20    │\n│ 2   ┆ b   ┆ 40    │\n└─────┴─────┴───────┘\n```",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use **`DataFrame.unpivot`**, the current name for wide-to-long reshaping. It's the inverse of `pivot`. `melt` is the older name for the same operation and still appears in the API reference, but `unpivot` is the one to use.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"id\": [1, 2],\n    \"a\": [10, 20],\n    \"b\": [30, 40],\n})\n\nlong = df.unpivot(\n    index=\"id\",          # columns to keep as identifiers\n    on=[\"a\", \"b\"],       # columns to melt into rows\n    variable_name=\"var\", # name for the former column names\n    value_name=\"val\",    # name for the values\n)\n```\n\nResult:\n\n```\nshape: (4, 3)\n┌─────┬─────┬─────┐\n│ id  ┆ var ┆ val │\n│ --- ┆ --- ┆ --- │\n│ i64 ┆ str ┆ i64 │\n╞═════╪═════╪═════╡\n│ 1   ┆ a   ┆ 10  │\n│ 2   ┆ a   ┆ 20  │\n│ 1   ┆ b   ┆ 30  │\n│ 2   ┆ b   ┆ 40  │\n└─────┴─────┴─────┘\n```\n\nIf you omit `on`, every column not listed in `index` is unpivoted.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "struct-field",
+      "regime": "deep",
+      "category": "Expr.struct",
+      "question": "In Polars, I have a struct column \"addr\" with fields \"city\" and \"zip\". How do I pull out the \"city\" field as its own column, and rename all struct fields at once? Name the struct methods and show them.",
+      "A": {
+        "text": "Use the `.struct` expression namespace:\n\n- `struct.field(name)` extracts one field as a column.\n- `struct.rename_fields(names)` renames all fields at once. The list must give a new name for every field, in order.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"addr\": [\n        {\"city\": \"NYC\", \"zip\": \"10001\"},\n        {\"city\": \"LA\",  \"zip\": \"90001\"},\n    ]\n})\n\n# 1) Pull out \"city\" as its own column\ndf.select(pl.col(\"addr\").struct.field(\"city\"))\n# column named \"city\" (the field name is inherited)\n\n# 2) Rename all struct fields at once\ndf.select(pl.col(\"addr\").struct.rename_fields([\"town\", \"postal_code\"]))\n\n# 3) Combine: rename, then unnest into separate columns\ndf.with_columns(\n    pl.col(\"addr\").struct.rename_fields([\"town\", \"postal_code\"])\n).unnest(\"addr\")\n```\n\n`struct.field` returns a column named after the field, so add `.alias(\"city\")` if you want to be explicit. Use `.unnest(\"addr\")` on the DataFrame, or `.struct.unnest()` in an expression, to turn every field into its own column.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use `struct.field` to pull out one field, and `struct.rename_fields` to rename all of them at once.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\n    \"addr\": [\n        {\"city\": \"Oslo\", \"zip\": \"0150\"},\n        {\"city\": \"Bergen\", \"zip\": \"5003\"},\n    ]\n})\n\n# Extract \"city\" as its own column\ncities = df.select(pl.col(\"addr\").struct.field(\"city\"))\n\n# Rename all struct fields at once (list must match the field count and order)\nrenamed = df.with_columns(\n    pl.col(\"addr\").struct.rename_fields([\"town\", \"postcode\"])\n)\n```\n\n`field` returns the sub-field as a column named `city`. To keep it alongside the original data, use `df.with_columns(pl.col(\"addr\").struct.field(\"city\").alias(\"city\"))`. If you want every struct field as its own column, use `struct.unnest()`.",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "array-namespace",
+      "regime": "deep",
+      "category": "Expr.arr",
+      "question": "In Polars I have a fixed-size Array column (dtype pl.Array), not a List. Using the array namespace specifically, how do I get the per-row sum and the per-row max? Name the array methods and show them.",
+      "A": {
+        "text": "Use the `arr` namespace methods `arr.sum()` and `arr.max()`. Each reduces across the elements of every row.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame(\n    {\"a\": [[1, 2, 3], [4, 5, 6]]},\n    schema={\"a\": pl.Array(pl.Int64, 3)},\n)\n\ndf.with_columns(\n    row_sum=pl.col(\"a\").arr.sum(),\n    row_max=pl.col(\"a\").arr.max(),\n)\n```\n\nThis returns `row_sum` = `[6, 15]` and `row_max` = `[3, 6]`.",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `.arr` namespace methods `sum` and `max`. Each returns one value per row.\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame(\n    {\"x\": [[1, 2, 3], [4, 5, 6]]},\n    schema={\"x\": pl.Array(pl.Int64, 3)},\n)\n\ndf.with_columns(\n    row_sum=pl.col(\"x\").arr.sum(),\n    row_max=pl.col(\"x\").arr.max(),\n)\n```\n\nResult:\n\n```\nshape: (2, 3)\n┌───────────────┬─────────┬─────────┐\n│ x             ┆ row_sum ┆ row_max │\n│ ---           ┆ ---     ┆ ---     │\n│ array[i64, 3] ┆ i64     ┆ i64     │\n╞═══════════════╪═════════╪═════════╡\n│ [1, 2, 3]     ┆ 6       ┆ 3       │\n│ [4, 5, 6]     ┆ 15      ┆ 6       │\n└───────────────┴─────────┴─────────┘\n```",
+        "stop_reason": "end_turn"
+      }
+    },
+    {
+      "id": "name-suffix",
+      "regime": "deep",
+      "category": "Expr.name",
+      "question": "In Polars, when selecting many columns in one expression, how do I add the suffix \"_old\" to every output column name using the name namespace? Name the method and show it.",
+      "A": {
+        "text": "Use the `name.suffix()` method on an expression. When you select several columns, apply it to the multi-column expression, for example with `pl.all()` or `pl.col([...])`:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4], \"c\": [5, 6]})\n\n# Add \"_old\" to every column name\nout = df.select(pl.all().name.suffix(\"_old\"))\nprint(out.columns)  # ['a_old', 'b_old', 'c_old']\n```\n\nTo target specific columns, use `pl.col([...])` in the same way:\n\n```python\nout = df.select(pl.col([\"a\", \"b\"]).name.suffix(\"_old\"))\n# columns: ['a_old', 'b_old']\n```",
+        "stop_reason": "end_turn"
+      },
+      "B": {
+        "text": "Use the `suffix` method from the `name` namespace:\n\n```python\nimport polars as pl\n\ndf = pl.DataFrame({\"a\": [1, 2], \"b\": [3, 4], \"c\": [5, 6]})\n\nout = df.select(pl.col(\"a\", \"b\").name.suffix(\"_old\"))\nprint(out.columns)  # ['a_old', 'b_old']\n```\n\n`pl.col(...)` can take several column names or a selector, and `.name.suffix(\"_old\")` renames each resulting output column.",
+        "stop_reason": "end_turn"
+      }
+    }
+  ]
+}

@@ -1,0 +1,208 @@
+# Questions for the invented-name A/B. Same design as powerquery-m-for-agents and dax-for-agents.
+#
+# Each question must be one whose answer NAMES POLARS FUNCTIONS OR EXPRESSION METHODS, because
+# that is what the metric counts: every `pl.<x>`, `cs.<x>`, `<expr>.<method>` and
+# `DataFrame`/`Series`/`LazyFrame` member an answer writes in code. A question answerable in
+# prose measures nothing.
+#
+# `regime` splits the bank in two, and the halves are never averaged together:
+#   core  the everyday surface every tutorial covers: pl.* functions, DataFrame/LazyFrame/Series,
+#         plain Expr methods.
+#   deep  the namespaced and less-written corners: Expr.str / .dt / .list / .struct, selectors.
+# The claim "the reference helps" can be true for one half and false for the other, and a single
+# blended number would hide which.
+#
+# `category` is the catalogue group (catalog/polars-*.json -> groups) whose rows arm B is given:
+# names and one-line summaries, never the card that holds the answer.
+#
+# `traps` are names the question is known to attract that do NOT exist in Polars. They are not the
+# metric (the metric is the whole catalogue); they document what the question is for.
+
+questions:
+  # ---------------------------------------------------------------- core
+  - id: read-csv-select
+    regime: core
+    category: functions
+    question: >-
+      In Polars, how do I read a CSV file and keep only two columns by name? Name the functions
+      and show a short snippet.
+    traps: [pl.load_csv, pl.read_table]
+
+  - id: conditional-column
+    regime: core
+    category: functions
+    question: >-
+      In Polars, how do I add a column whose value is "high" when price > 100 and "low"
+      otherwise? Name the functions and show the expression.
+    traps: [pl.if_else, pl.case]
+
+  - id: concat-frames
+    regime: core
+    category: functions
+    question: >-
+      In Polars I have two DataFrames with the same columns. How do I stack them into one? Name
+      the function and show it.
+    traps: [pl.append, pl.row_bind, pl.bind_rows]
+
+  - id: groupby-agg
+    regime: core
+    category: DataFrame
+    question: >-
+      In Polars, how do I group a DataFrame by a "region" column and sum "sales" per group? Name
+      the methods and show the snippet.
+    traps: [DataFrame.groupby, DataFrame.summarise]
+
+  - id: join-frames
+    regime: core
+    category: DataFrame
+    question: >-
+      In Polars, how do I left-join a DataFrame to another on a shared "id" column? Name the
+      method and its key argument and show it.
+    traps: [DataFrame.merge]
+
+  - id: pivot-wide
+    regime: core
+    category: DataFrame
+    question: >-
+      In Polars (eager), how do I pivot a long DataFrame to wide, one column per category with
+      the summed value? Name the method and show it.
+    traps: [DataFrame.spread, DataFrame.pivot_table]
+
+  - id: fill-nulls
+    regime: core
+    category: Expr
+    question: >-
+      In Polars, how do I replace nulls in a numeric column with 0, and separately forward-fill
+      another column? Name the expression methods and show them.
+    traps: [Expr.fillna, Expr.ffill, Expr.fill_na]
+
+  - id: cumulative-sum
+    regime: core
+    category: Expr
+    question: >-
+      In Polars, how do I compute a running (cumulative) sum of a column within an expression?
+      Name the method and show it.
+    traps: [Expr.cumsum, Expr.cum_sum_running]
+
+  - id: cast-and-round
+    regime: core
+    category: Expr
+    question: >-
+      In Polars, how do I round a float column to 2 decimals and then cast it to an integer type?
+      Name the expression methods and show them.
+    traps: [Expr.to_int, Expr.astype]
+
+  - id: value-counts
+    regime: core
+    category: Series
+    question: >-
+      In Polars, given a Series, how do I get the count of each distinct value, and separately the
+      list of unique values? Name the methods and show them.
+    traps: [Series.counts, Series.table]
+
+  # ---------------------------------------------------------------- deep
+  - id: str-extract-group
+    regime: deep
+    category: Expr.str
+    question: >-
+      In Polars, I have codes like "INV-2024-0042" in a column. How do I extract the middle number
+      with a regex capture group? Name the string method and show the expression.
+    traps: [Expr.str.regex_extract, Expr.str.match]
+
+  - id: str-contains-split
+    regime: deep
+    category: Expr.str
+    question: >-
+      In Polars, how do I filter rows whose text column contains "error" (regex), and separately
+      split that column on commas into a list? Name the string methods and show them.
+    traps: [Expr.str.includes, Expr.str.split_by]
+
+  - id: str-pad-zeros
+    regime: deep
+    category: Expr.str
+    question: >-
+      In Polars, how do I left-pad a string column with zeros to width 6, and uppercase another?
+      Name the string methods and show them.
+    traps: [Expr.str.pad, Expr.str.zpad]
+
+  - id: dt-parts
+    regime: deep
+    category: Expr.dt
+    question: >-
+      In Polars, from a datetime column, how do I get the year and the weekday as separate
+      columns? Name the temporal methods and show them.
+    traps: [Expr.dt.dayofweek, Expr.dt.get_year]
+
+  - id: dt-truncate
+    regime: deep
+    category: Expr.dt
+    question: >-
+      In Polars, how do I truncate a datetime column to the start of its month, and separately add
+      3 days to it? Name the temporal methods and show them.
+    traps: [Expr.dt.add_days, Expr.dt.plus_days]
+
+  - id: list-eval
+    regime: deep
+    category: Expr.list
+    question: >-
+      In Polars, I have a column of lists of numbers. How do I get the max of each list, and
+      separately sort each list? Name the list methods and show them.
+    traps: [Expr.list.maximum, Expr.list.order_by]
+
+  - id: list-gather
+    regime: deep
+    category: Expr.list
+    question: >-
+      In Polars, how do I take the first element of each list in a list column? Name the list
+      method and show it.
+    traps: [Expr.list.first_element, Expr.list.head_one]
+
+  - id: selectors-numeric
+    regime: deep
+    category: selectors
+    question: >-
+      In Polars, using the selectors module, how do I select all numeric columns, and separately
+      all columns whose name matches a regex? Name the selectors and show them.
+    traps: [cs.number, cs.regex]
+
+  - id: rename-columns
+    regime: deep
+    category: DataFrame
+    question: >-
+      In Polars (coming from pandas), how do I rename the columns "a" and "b" to "x" and "y" on a
+      DataFrame? Name the method and its exact argument shape and show it.
+    traps: [DataFrame.rename_columns, DataFrame.set_axis]
+
+  - id: unpivot-long
+    regime: deep
+    category: DataFrame
+    question: >-
+      In Polars, how do I reshape a wide DataFrame to long form (one row per value), the opposite
+      of pivot? Name the current method and show it.
+    traps: [DataFrame.melt_longer, DataFrame.wide_to_long]
+
+  - id: struct-field
+    regime: deep
+    category: Expr.struct
+    question: >-
+      In Polars, I have a struct column "addr" with fields "city" and "zip". How do I pull out the
+      "city" field as its own column, and rename all struct fields at once? Name the struct
+      methods and show them.
+    traps: [Expr.struct.get_field, Expr.struct.unnest_field]
+
+  - id: array-namespace
+    regime: deep
+    category: Expr.arr
+    question: >-
+      In Polars I have a fixed-size Array column (dtype pl.Array), not a List. Using the array
+      namespace specifically, how do I get the per-row sum and the per-row max? Name the array
+      methods and show them.
+    traps: [Expr.arr.total, Expr.arr.maximum]
+
+  - id: name-suffix
+    regime: deep
+    category: Expr.name
+    question: >-
+      In Polars, when selecting many columns in one expression, how do I add the suffix "_old" to
+      every output column name using the name namespace? Name the method and show it.
+    traps: [Expr.name.add_suffix, Expr.name.with_suffix]
