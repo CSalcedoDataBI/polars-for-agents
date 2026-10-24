@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/CSalcedoDataBI/polars-for-agents/compare/v0.1.0...v0.2.0) (2026-10-24)
+
+
+### Features
+
+* **evals:** invented-name A/B hallucination eval ([#6](https://github.com/CSalcedoDataBI/polars-for-agents/issues/6)) ([deeb766](https://github.com/CSalcedoDataBI/polars-for-agents/commit/deeb7666524d62780442b9255c199301426a8984))
+* **notes:** second drafting pass over uncovered APIs + precise name-check fix ([#8](https://github.com/CSalcedoDataBI/polars-for-agents/issues/8)) ([f7b6b81](https://github.com/CSalcedoDataBI/polars-for-agents/commit/f7b6b81c4adca00c90f658c6d400efabee6d9d4e))
+
 ## 0.1.0 (2026-10-24)
 
 
