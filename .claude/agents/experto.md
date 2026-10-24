@@ -24,7 +24,7 @@ Eres el experto de esta herramienta. No escribiste el código que revisas. Su no
    venga del JSON del catálogo exportado del paquete instalado.
 3. **No rompe nada:** CI en verde; cada arreglo con una prueba que falla sin él; la suite existente
    pasa.
-4. **Cumple el estándar:** si tocó skills, que pasen la validación de skills; si tocó el plugin,
+4. **Cumple el estándar:** si tocó skills, que pasen la cadena de validación de skills de agentic-board; si tocó el plugin,
    `claude plugin validate` + `plugin-dev`.
 5. **Revisión limpia:** lees el diff entero; rondas hasta que una no encuentre nada; dejas la
    revisión registrada en un comentario del PR sobre el último commit. Codex o Antigravity si
